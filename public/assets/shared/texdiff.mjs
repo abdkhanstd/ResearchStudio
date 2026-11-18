@@ -1,7 +1,7 @@
 /*! Research Studio — Copyright (c) 2026 Abdullah Aman Khan. All rights reserved.
  *  Source available under the Research Studio Personal Use License (see LICENSE): personal, non-commercial use only.
  *  Copying, redistribution, modification and use in other projects are not permitted. */
-'use strict';
+// Shared by the browser (exports are made on the user's computer) and the server (hand-off to Rykhet LaTeX).
 /**
  * latexdiff-style markup for the "Diff PDF": the revised LaTeX source with deletions struck through in red and
  * insertions underlined in blue, compiled on the user's machine. Safety first: the source is split into atomic tokens
@@ -200,4 +200,4 @@ function diffProject(p) {
   return { files, main, marked };
 }
 
-module.exports = { tokenize, diffTokens, markBlock, diffProject };
+export { tokenize, diffTokens, markBlock, diffProject };

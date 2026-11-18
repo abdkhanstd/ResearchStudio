@@ -1,7 +1,7 @@
 /*! Research Studio — Copyright (c) 2026 Abdullah Aman Khan. All rights reserved.
  *  Source available under the Research Studio Personal Use License (see LICENSE): personal, non-commercial use only.
  *  Copying, redistribution, modification and use in other projects are not permitted. */
-'use strict';
+// Shared by the browser (exports are made on the user's computer) and the server (hand-off to Rykhet LaTeX).
 /** Text exports: change list (Markdown / plain text), unified diff, revised LaTeX sources, revised plain text. */
 
 const READ_KINDS = new Set(['title', 'abstract', 'para', 'list', 'caption', 'equation', 'footnote']);
@@ -147,4 +147,4 @@ function revisedText(p, tk) {
   return out.join('\n');
 }
 
-module.exports = { changeList, unifiedDiff, revisedTex, revisedText, regions, where };
+export { changeList, unifiedDiff, revisedTex, revisedText, regions, where };

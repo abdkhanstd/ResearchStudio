@@ -14,7 +14,8 @@ import { pdfjs } from './pdf.js';
 
 const TEXT_EXT = /\.(tex|bib|bbl|sty|cls|cfg|txt|dat|csv|tsv|clo|bst|def)$/i;
 const IMG_EXT = ['.pdf', '.png', '.jpg', '.jpeg', '.eps', '.ps', ''];
-const FLOATS = /^(figure|figure\*|table|table\*|wrapfigure|wraptable|sidewaysfigure|sidewaystable|subfigure|algorithm|algorithm\*|listing|SCfigure|SCtable)$/;
+// floats, with the starred and package variants (rotating: sidewaystable*, wrapfig, sidecap, tufte margin floats)
+const FLOATS = /^((?:wrap|sideways|margin|SC)?(?:figure|table)\*?|subfigure|algorithm\*?|listing)$/;
 const MATH_ENVS = /^(equation|equation\*|align|align\*|gather|gather\*|multline|multline\*|eqnarray|eqnarray\*|displaymath|flalign|flalign\*|alignat|alignat\*|split)$/;
 const LISTS = /^(itemize|enumerate|description|compactitem|compactenum|inparaenum|enumerate\*|itemize\*)$/;
 const THEOREMS = /^(theorem|lemma|corollary|proposition|definition|remark|example|assumption|proof|claim|conjecture|observation|problem|hypothesis|note|fact|property)\*?$/;
@@ -251,7 +252,7 @@ function scanLabels(text, ieee) {
   }).replace(/[{}]/g, '');
   const out = {};
   let cur = null, appendix = false, inFloat = null;
-  const re = /\\renewcommand\*?\s*\{?\\the(section|subsection|subsubsection|table|figure|equation)\}?\s*\{|\\(section|subsection|subsubsection)(\*?)\s*(?:\[[^\]]*\])?\s*\{|\\appendix\b|\\begin\s*\{(table|figure|equation|align|gather|multline|eqnarray)(\*?)\}|\\end\s*\{(table|figure)\*?\}|\\caption\s*(?:\[[^\]]*\])?\s*\{|\\label\s*\{([^}]+)\}|\\setcounter\s*\{(\w+)\}\s*\{(\d+)\}|\\\\|\\begin\s*\{(theorem|lemma|corollary|proposition|definition|remark|example|assumption|claim|conjecture|observation|problem|hypothesis|fact|property)\}/g;
+  const re = /\\renewcommand\*?\s*\{?\\the(section|subsection|subsubsection|table|figure|equation)\}?\s*\{|\\(section|subsection|subsubsection)(\*?)\s*(?:\[[^\]]*\])?\s*\{|\\appendix\b|\\begin\s*\{(?:sideways|wrap|margin|SC)?(table|figure|equation|align|gather|multline|eqnarray)(\*?)\}|\\end\s*\{(?:sideways|wrap|margin|SC)?(table|figure)\*?\}|\\caption\s*(?:\[[^\]]*\])?\s*\{|\\label\s*\{([^}]+)\}|\\setcounter\s*\{(\w+)\}\s*\{(\d+)\}|\\\\|\\begin\s*\{(theorem|lemma|corollary|proposition|definition|remark|example|assumption|claim|conjecture|observation|problem|hypothesis|fact|property)\}/g;
   let m, eqEnv = null;
   while ((m = re.exec(text))) {
     if (m[10]) { c[m[10]] = (c[m[10]] || 0) + 1; cur = { n: String(c[m[10]]), kind: m[10] }; continue; }

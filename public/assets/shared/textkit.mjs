@@ -270,6 +270,49 @@ export function renderTex(src, ctx = {}, opts = {}) {
     if (html) return `<code class="math">${escHtml(tex)}</code>`;
     return display ? ` $$${tex.trim()}$$ ` : `$${tex}$`;
   }
+  /**
+   * A tabular as a grid: rows split at \\ and cells at & (outside braces), rules dropped, \multicolumn spans kept.
+   * HTML: a table (rows above the first rule are the header). Text: cells separated by tabs, rows by new lines.
+   */
+  function tabular(env) {
+    if (/^(tabular\*|tabularx|tabulary)$/.test(env)) readGroup();
+    readOpt(); readGroup(); // position, column spec
+    const open = new RegExp(`\\\\begin\\s*\\{${env.replace('*', '\\*')}\\}`, 'g'), close = new RegExp(`\\\\end\\s*\\{${env.replace('*', '\\*')}\\}`, 'g');
+    let d = 1, j = -1, endLen = 0;
+    for (let k = i; k < s.length && d > 0;) {
+      open.lastIndex = k; close.lastIndex = k;
+      const o = open.exec(s), c = close.exec(s);
+      if (!c) break;
+      if (o && o.index < c.index) { d++; k = o.index + o[0].length; continue; }
+      d--; k = c.index + c[0].length;
+      if (!d) { j = c.index; endLen = c[0].length; }
+    }
+    const body = j >= 0 ? s.slice(i, j) : s.slice(i);
+    i = j >= 0 ? j + endLen : s.length;
+    // split at depth 0
+    const split = (t, sep) => { const parts = []; let b = 0, st = 0; for (let k = 0; k < t.length; k++) { const ch = t[k]; if (ch === '\\') { if (sep === '\\\\' && t[k + 1] === '\\' && !b) { parts.push(t.slice(st, k)); st = k + 2; k++; continue; } k++; continue; } if (ch === '{') b++; else if (ch === '}') b--; else if (ch === sep && !b) { parts.push(t.slice(st, k)); st = k + 1; } } parts.push(t.slice(st)); return parts; };
+    const RULE = /\\(toprule|midrule|bottomrule|hline|endhead|endfirsthead|endfoot|endlastfoot|morecmidrules)\b(\[[^\]]*\])?|\\(cline|cmidrule)\s*(\([^)]*\))?\s*\{[^}]*\}|\\addlinespace\s*(\[[^\]]*\])?|\\specialrule\s*\{[^}]*\}\s*\{[^}]*\}\s*\{[^}]*\}|\\(rowcolor|arrayrulecolor)\s*(\[[^\]]*\])?\s*\{[^}]*\}|\\noalign\s*\{[^}]*\}/g;
+    const rows = [];
+    let ruleAfter = -1;
+    for (let raw of split(body.replace(/\\tabularnewline\b/g, '\\\\'), '\\\\')) {
+      raw = raw.replace(/^\s*\[[^\]]*\]/, ''); // \\[2pt]
+      const hadRule = RULE.test(raw); RULE.lastIndex = 0;
+      const t = raw.replace(RULE, ' ');
+      if (hadRule && rows.length && ruleAfter < 0 && /^\s*(\\(midrule|hline|cmidrule|cline))/.test(raw)) ruleAfter = rows.length;
+      const cells = split(t, '&').map(x => {
+        x = x.replace(/\s+/g, ' ');
+        const mc = x.match(/^\s*\\multicolumn\s*\{\s*(\d+)\s*\}\s*\{[^}]*\}\s*\{([\s\S]*)\}\s*$/);
+        return mc ? { span: +mc[1], v: sub(mc[2]).trim() } : { span: 1, v: sub(x).trim() };
+      });
+      if (cells.every(c => !c.v)) continue;
+      rows.push(cells);
+    }
+    if (!rows.length) return '';
+    if (!html) return '\u0002' + rows.map(r => r.map(c => c.v + '\u0001'.repeat(c.span - 1)).join('\u0001')).join('\u0002') + '\u0002';
+    const head = ruleAfter > 0 && ruleAfter < rows.length ? ruleAfter : 0;
+    const tr = (r, tag) => `<tr>${r.map(c => `<${tag}${c.span > 1 ? ` colspan="${c.span}"` : ''}>${c.v}</${tag}>`).join('')}</tr>`;
+    return `<table class="tex-tab">${head ? `<thead>${rows.slice(0, head).map(r => tr(r, 'th')).join('')}</thead>` : ''}<tbody>${rows.slice(head).map(r => tr(r, 'td')).join('')}</tbody></table>`;
+  }
   function readMath(close) {
     const st = i;
     for (; i < s.length; i++) {
@@ -325,7 +368,7 @@ export function renderTex(src, ctx = {}, opts = {}) {
         }
         if (base === 'begin' && /^(itemize|enumerate|description)$/.test(env)) { readOpt(); out.push(html ? '<span class="list">' : ''); continue; }
         if (base === 'end' && /^(itemize|enumerate|description)$/.test(env)) { out.push(html ? '</span>' : ''); continue; }
-        if (base === 'begin' && /^(tabular|tabularx|tabular\*|array)$/.test(env)) { if (env !== 'tabular') readGroup(); readOpt(); readGroup(); continue; }
+        if (base === 'begin' && /^(tabular\*?|tabularx|tabulary|longtable\*?|array|tabu)$/.test(env)) { out.push(tabular(env)); continue; }
         if (base === 'begin') readOpt();
         continue;
       }
@@ -378,7 +421,7 @@ export function renderTex(src, ctx = {}, opts = {}) {
     i = j;
   }
   const r = out.join('');
-  return html ? r.replace(/\n\s*\n/g, '<br><br>') : r.replace(/[ \t]*\n[ \t]*/g, '\n').replace(/[ \t]{2,}/g, ' ').replace(/\n(?!•)/g, ' ').replace(/ {2,}/g, ' ').trim();
+  return html ? r.replace(/\n\s*\n/g, '<br><br>') : r.replace(/[ \t]*\n[ \t]*/g, '\n').replace(/[ \t]{2,}/g, ' ').replace(/\n(?!•)/g, ' ').replace(/ {2,}/g, ' ').replace(/ ?\u0002 ?/g, '\n').replace(/ ?\u0001 ?/g, '\t').replace(/^\n+|\n+$/g, '').trim();
 }
 
 /** Visible text of a block (LaTeX source is rendered, plain text is returned as is). */

@@ -24,8 +24,7 @@ const { createAssist } = require('./lib/assist');
 const { createAccounts } = require('./lib/accounts');
 const { lint } = require('./lib/lint');
 const { runEvidence } = require('./lib/evidence');
-const EX = require('./lib/exporter');
-const TD = require('./lib/texdiff');
+let EX = null; // revised LaTeX and change lists (shared ES module: exports are made in the browser, see exports.js)
 const assist = require('./lib/assist');
 const EXPO = require('./lib/exposure'); // rule-based reading questions (fallback when the AI fails)
 const { readZip, writeZip } = require('./lib/zip');
@@ -62,7 +61,8 @@ async function rrCall(pathQ, body, timeout = 300000) {
 const refcheck = { enabled: false, link: () => null, start: async () => { throw new Error('Reference checking runs on the hosted service.'); }, status: async () => { throw new Error('not available'); } };
 const accounts = createAccounts({ dir: VAR });
 let tk = null; // shared text toolkit (ES module)
-const tkReady = import(path.join(PUB, 'assets', 'shared', 'textkit.mjs').replace(/\\/g, '/').replace(/^([A-Za-z]):/, 'file:///$1:')).then(m => { tk = m; });
+const shared = name => import(path.join(PUB, 'assets', 'shared', name).replace(/\\/g, '/').replace(/^([A-Za-z]):/, 'file:///$1:'));
+const tkReady = Promise.all([shared('textkit.mjs'), shared('exporter.mjs')]).then(([m, x]) => { tk = m; EX = x; });
 
 // ── Sessions (signed cookies, revocable on sign-out) ──
 const SESSION = 'studio-session', IDT = 'studio-idt', DAYS = 14;
@@ -1452,15 +1452,18 @@ async function projectApi(req, res, p, s, role, rest, url) {
     }
     return json(res, 200, { files, source: { kind: p.source.kind, filename: p.source.filename, main: p.source.main, files: p.source.files || [], texFiles: p.source.texFiles ? Object.keys(p.source.texFiles) : [], pdfPaired: !!p.source.pdfPaired, pdfName: p.source.pdfName || null, layoutVer: p.source.layoutVer || 0 }, latexShare: p.latexShare || null });
   }
-  // ── LaTeX sources with every change applied (live) ──
-  if (M === 'GET' && rest === 'source') {
+  // ── the stored LaTeX sources, as they are: the browser applies the changes, marks the diff and packs the files ──
+  if (M === 'GET' && rest === 'source-files') {
     if (p.source.kind !== 'latex') throw fail(400, 'This manuscript was uploaded as a PDF.');
-    const r = EX.revisedTex(p);
-    const list = Object.keys(r.files).map(f => ({ path: f, size: r.files[f].length, changed: (p.blocks || []).filter(b => b.src && b.src.file === f && b.cur !== b.text).length, blocks: (p.blocks || []).filter(b => b.src && b.src.file === f).length }));
-    const want = url.searchParams.get('path');
-    if (!want) return json(res, 200, { main: p.source.main, files: list, skipped: r.skipped });
-    if (r.files[want] == null) throw fail(404, 'No such file.');
-    return json(res, 200, { path: want, original: (p.source.texFiles || {})[want] || '', revised: r.files[want], regions: EX.regions(p, want) });
+    const original = p.source.original && /\.zip$/i.test(p.source.original) && (atLeast(role, 'editor') || p.settings.allowDownload) ? p.source.original : null;
+    return json(res, 200, { main: p.source.main, texFiles: p.source.texFiles || {}, removedBlocks: atLeast(role, 'editor') ? p.removedBlocks || [] : [], original });
+  }
+  // an export made in the browser, for the activity list
+  if (M === 'POST' && rest === 'exported') {
+    const b0 = await readBody(req, 2000);
+    act(p, s, 'export', { detail: U.strT(b0.kind, 40) });
+    save({ index: false, delay: 5000 });
+    return json(res, 200, { ok: true });
   }
   // ── page layout from a (new) compiled PDF, paired in the browser ──
   if (M === 'PUT' && rest === 'layout') {
@@ -1602,59 +1605,9 @@ async function projectApi(req, res, p, s, role, rest, url) {
   if (xm && M === 'GET') {
     const kind = xm[1];
     const base = (p.title || 'manuscript').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-').slice(0, 60) || 'manuscript';
-    const mineOnly = !atLeast(role, 'editor');
-    const view = mineOnly ? { ...p, suggestions: (p.suggestions || []).filter(x => x.by === s.sub) } : p;
-    act(p, s, 'export', { detail: kind }); save({ index: false, delay: 5000 });
-    if (kind === 'changes.md') return download(res, `${base}-proofreading.md`, 'text/markdown; charset=utf-8', EX.changeList(view, tk, { style: 'md', include: { applied: true, open: true, comments: true, rejected: url.searchParams.get('rejected') === '1' } }));
-    if (kind === 'changes.txt') return download(res, `${base}-proofreading.txt`, 'text/plain; charset=utf-8', EX.changeList(view, tk, { style: 'txt', include: { applied: true, open: true, comments: true, rejected: url.searchParams.get('rejected') === '1' } }));
-    if (kind === 'diff.txt') return download(res, `${base}.diff`, 'text/plain; charset=utf-8', EX.unifiedDiff(p));
-    if (kind === 'revised.txt') return download(res, `${base}-revised.txt`, 'text/plain; charset=utf-8', EX.revisedText(p, tk));
-    if (kind === 'data.json') { need('editor'); const { quiz, pending, ...rest2 } = p; return download(res, `${base}-studio.json`, 'application/json', JSON.stringify({ ...rest2, invites: (p.invites || []).map(({ hash, ...x }) => x) }, null, 1)); }
-    if (kind === 'diff.zip') {
-      need('editor');
-      if (p.source.kind !== 'latex') throw fail(400, 'The LaTeX diff is only available for LaTeX uploads.');
-      const r = TD.diffProject(p);
-      let entries = [];
-      const zipName = p.source.original && /.zip$/.test(p.source.original) ? p.source.original : null;
-      if (zipName) { const buf = await store.getFile(p.id, zipName); if (buf) { try { entries = readZip(buf); } catch { entries = []; } } }
-      const map = new Map(entries.map(e => [e.name, e.data]));
-      for (const [f, t] of Object.entries(r.files)) map.set(f, Buffer.from(t, 'utf8'));
-      map.set('STUDIO-DIFF.txt', Buffer.from(`Change markup (latexdiff style) for ${r.marked} paragraph(s). Compile ${r.main} as usual, e.g. latexmk -pdf ${r.main}
-`));
-      return download(res, `${base}-diff.zip`, 'application/zip', writeZip([...map].map(([name, data]) => ({ name, data }))));
-    }
-    if (kind === 'revised.tex' || kind === 'revised.zip') {
-      need('editor');
-      if (p.source.kind !== 'latex') throw fail(400, 'Revised LaTeX is only available for LaTeX uploads.');
-      const r = EX.revisedTex(p);
-      if (kind === 'revised.tex') { const main = p.source.main && r.files[p.source.main] != null ? p.source.main : Object.keys(r.files).find(f => /\.tex$/.test(f)); return download(res, path.basename(main || 'main.tex').replace(/\.tex$/, '') + '-revised.tex', 'application/x-tex; charset=utf-8', r.files[main] || ''); }
-      let entries = [];
-      const zipName = p.source.original && /\.zip$/.test(p.source.original) ? p.source.original : null;
-      if (zipName) { const buf = await store.getFile(p.id, zipName); if (buf) { try { entries = readZip(buf); } catch { entries = []; } } }
-      const map = new Map(entries.map(e => [e.name, e.data]));
-      for (const [f, t] of Object.entries(r.files)) map.set(f, Buffer.from(t, 'utf8'));
-      if (r.skipped.length) map.set('STUDIO-NOTES.txt', Buffer.from(`${r.skipped.length} changed paragraph(s) could not be placed automatically; see the change list.\n`));
-      return download(res, `${base}-revised.zip`, 'application/zip', writeZip([...map].map(([name, data]) => ({ name, data }))));
-    }
-    // a compile-ready project (revised, or with latexdiff-style change markup) for the compiler on the user's machine
-    if (kind === 'compile.json') {
-      need('editor');
-      if (p.source.kind !== 'latex') throw fail(400, 'Only LaTeX uploads can be compiled.');
-      const which = url.searchParams.get('v') === 'diff' ? 'diff' : 'revised';
-      const r = which === 'diff' ? TD.diffProject(p) : { ...EX.revisedTex(p), main: p.source.main };
-      let entries = [];
-      const zipName = p.source.original && /\.zip$/.test(p.source.original) ? p.source.original : null;
-      if (zipName) { const buf = await store.getFile(p.id, zipName); if (buf) { try { entries = readZip(buf); } catch { entries = []; } } }
-      const map = new Map(entries.map(e => [e.name, e.data]));
-      for (const [f, t] of Object.entries(r.files)) map.set(f, Buffer.from(t, 'utf8'));
-      const mainPdf = (r.main || '').replace(/\.tex$/, '.pdf');
-      const files = [];
-      for (const [name, data] of map) {
-        if (/(^|\/)(__MACOSX|\.git)\//.test(name) || /\.(aux|log|out|blg|synctex\.gz|fls|fdb_latexmk|toc|lof|lot|nav|snm)$/i.test(name) || name === mainPdf) continue;
-        files.push(/\.(tex|bib|bbl|sty|cls|bst|cfg|def|clo|txt|csv|dat)$/i.test(name) ? { path: name, text: data.toString('utf8') } : { path: name, base64: data.toString('base64') });
-      }
-      return json(res, 200, { which, main: r.main, marked: r.marked || 0, applied: r.applied || 0, skipped: (r.skipped || []).length, files });
-    }
+    // the revised and marked-up LaTeX projects, PDFs, change lists and diffs are made in the browser (exports.js)
+    if (kind === 'data.json') { need('editor'); act(p, s, 'export', { detail: kind }); save({ index: false, delay: 5000 }); const { quiz, pending, ...rest2 } = p; return download(res, `${base}-studio.json`, 'application/json', JSON.stringify({ ...rest2, invites: (p.invites || []).map(({ hash, ...x }) => x) }, null, 1)); }
+    if (/^(changes\.(md|txt)|diff\.(txt|zip)|revised\.(txt|tex|zip)|compile\.json)$/.test(kind)) throw fail(410, 'Exports are now made on your computer. Reload the page and try again.');
     throw fail(404, 'Unknown export.');
   }
   throw fail(404, 'Not found');

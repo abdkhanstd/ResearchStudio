@@ -40,7 +40,7 @@ function connect() {
 }
 
 export async function compileLatex({ files, main, key = 'doc', engine = 'pdftex', onProgress = () => {} }) {
-  onProgress('Connecting to Rykhet LaTeX…');
+  onProgress('Starting TeX on your computer (Rykhet LaTeX)…');
   await connect();
   const id = Math.random().toString(36).slice(2);
   const transfer = [];

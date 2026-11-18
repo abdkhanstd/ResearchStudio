@@ -51,7 +51,7 @@ export async function forkToFolder(p, onProgress = () => {}) {
   let name = base;
   for (let k = 2; k < 100; k++) { try { await parent.getDirectoryHandle(name); name = `${base}-${k}`; } catch { break; } }
   onProgress('Preparing the project…');
-  const src = await api(`/api/projects/${p.id}/export/compile.json?v=revised`);
+  const src = await (await import('./exports.js')).compileFiles(p, 'revised', onProgress);
   const dir = await parent.getDirectoryHandle(name, { create: true });
   let n = 0;
   for (const f of src.files) {
@@ -59,7 +59,7 @@ export async function forkToFolder(p, onProgress = () => {}) {
     let d = dir;
     for (const seg of parts.slice(0, -1)) d = await d.getDirectoryHandle(seg, { create: true });
     const w = await (await d.getFileHandle(parts[parts.length - 1], { create: true })).createWritable();
-    await w.write(typeof f.text === 'string' ? f.text : b64ToU8(f.base64));
+    await w.write(typeof f.text === 'string' ? f.text : f.data);
     await w.close();
     if (++n % 10 === 0) onProgress(`Writing files… ${n}/${src.files.length}`);
   }
@@ -151,12 +151,13 @@ const fileBase = p => (p.title || 'manuscript').replace(/[^\w\- ]+/g, '').trim()
 /** Compile the revised project, or the one with change markup ("diff"), on this computer and download the PDF. */
 export async function compilePdf(p, which, onProgress = () => {}) {
   onProgress('Preparing the project…');
-  const src = await api(`/api/projects/${p.id}/export/compile.json?v=${which}`);
-  const files = src.files.map(f => (typeof f.text === 'string' ? { path: f.path, text: f.text } : { path: f.path, data: b64ToU8(f.base64) }));
+  const X = await import('./exports.js');
+  const src = await X.compileFiles(p, which, onProgress);
   const { compileLatex } = await import('./texbridge.js');
-  const r = await compileLatex({ files, main: src.main, key: `${p.id}-${which}`, onProgress: m => onProgress(m) });
+  const r = await compileLatex({ files: src.files, main: src.main, key: `${p.id}-${which}`, onProgress: m => onProgress(m) });
   saveBlob(new Blob([r.pdf], { type: 'application/pdf' }), `${fileBase(p)}-${which === 'diff' ? 'changes' : 'revised'}.pdf`);
-  return { ...r, marked: src.marked, applied: src.applied, skipped: src.skipped };
+  api(`/api/projects/${p.id}/exported`, { method: 'POST', body: { kind: `${which}.pdf` } }).catch(() => {});
+  return { ...r, marked: src.marked, applied: src.applied, skipped: src.skipped.length };
 }
 
 /**
@@ -220,8 +221,16 @@ export function Source({ p, arg }) {
   const [last, setLast] = useState(null);
   const viewRef = useRef(null);
   const changedTotal = p.blocks.filter(b => b.src && b.cur !== b.text).length;
-  useEffect(() => { api(`/api/projects/${p.id}/source`).then(r => { setList(r); setCur(c => c || r.main || (r.files[0] && r.files[0].path)); }, toastError); }, [p.rev]);
-  useEffect(() => { if (cur) api(`/api/projects/${p.id}/source?path=${encodeURIComponent(cur)}`).then(setFile, toastError); }, [cur, p.rev]);
+  // the revised sources are made here from the stored ones (nothing is computed on the server)
+  const [rev, setRev] = useState(null);
+  useEffect(() => { import('./exports.js').then(m => m.revisedSources(p)).then(setRev, toastError); }, [p.rev]);
+  useEffect(() => {
+    if (!rev) return;
+    const files = Object.keys(rev.files).map(f => ({ path: f, size: rev.files[f].length, changed: p.blocks.filter(b => b.src && b.src.file === f && b.cur !== b.text).length, blocks: p.blocks.filter(b => b.src && b.src.file === f).length }));
+    setList({ main: rev.main, files, skipped: rev.skipped });
+    setCur(c => c || rev.main || (files[0] && files[0].path));
+  }, [rev]);
+  useEffect(() => { if (rev && cur && rev.files[cur] != null) setFile({ path: cur, original: rev.original[cur] || '', revised: rev.files[cur], regions: rev.regions(cur) }); }, [cur, rev]);
   const [kind, setKind] = useState(null); // 'fork' when the connected folder is a copy made here
   useEffect(() => { folderOf(p.id).then(setFolder); kv.get(`syncedAt:${p.id}`).then(setLast); kv.get(`dirKind:${p.id}`).then(setKind); }, []);
   // auto-write while this tab is open
@@ -276,7 +285,7 @@ export function Source({ p, arg }) {
   };
   const toLatex = async () => {
     setBusy('latex');
-    try { const r = await api(`/api/projects/${p.id}/latex-share`, { method: 'POST', body: {} }); window.open(r.url, '_blank', 'noopener'); toast('Opened in Rykhet LaTeX — choose “Make my copy”, edit, then press “Send to Studio” there.', 'ok', 9000); getStore(p.id).refetch(100); }
+    try { const r = await api(`/api/projects/${p.id}/latex-share`, { method: 'POST', body: {} }); window.open(r.url, '_blank', 'noopener'); toast('Opened in Rykhet LaTeX: edit and compile there (on your computer), then press “Send to Studio”.', 'ok', 9000); getStore(p.id).refetch(100); }
     catch (e) { toastError(e); }
     setBusy(null);
   };
@@ -323,6 +332,13 @@ export function Source({ p, arg }) {
     } catch (e) { toastError(e); }
     setBusy(null);
   };
+  // the .zip is packed here: the server only hands over the stored files
+  const zipOut = async which => {
+    setBusy(`zip-${which}`);
+    try { const m = await import('./exports.js'); const r = await m.downloadProject(p, which); toast(which === 'diff' ? `Diff project ready: ${plural(r.marked, 'changed paragraph')} marked` : 'Revised project ready', 'ok', 5000); }
+    catch (e) { toastError(e); }
+    setBusy(null);
+  };
   const setAutoOn = v => { setAuto(v); try { localStorage.setItem(`studio-autosync-${p.id}`, v ? '1' : '0'); } catch { /* blocked */ } };
   const rendered = useMemo(() => {
     if (!file) return null;
@@ -364,7 +380,7 @@ export function Source({ p, arg }) {
         <h3 class="card-h">${Icon('external')} ${p.latexEnabled ? 'Round trip with Rykhet LaTeX' : 'Bring in an edited version'}</h3>
         ${p.latexEnabled ? html`<ol class="src-steps small muted">
           <li><b>Send</b> the revised project (${plural(changedTotal, 'changed paragraph')}) to latex.rykhet.com — a private share for you${p.members.some(m => m.role === 'editor') ? ' and the editors' : ''}.</li>
-          <li>There, choose <b>Make my copy</b>, edit and compile.</li>
+          <li>It opens in the full editor: edit and compile there, on your computer.</li>
           <li>Press <b>Send to Studio</b> in the editor, then <b>Bring changes back</b> here: every edit is merged as a recorded change and the checks run again.</li>
         </ol>` : null}
         ${p.latexEnabled ? html`<div class="row-wrap">
@@ -385,8 +401,8 @@ export function Source({ p, arg }) {
         <div class="row-wrap">
           ${p.compileBridge ? html`<button class="btn btn-primary btn-sm" disabled=${!!busy || !decide} onClick=${() => pdfOut('diff')} title="The manuscript with deletions struck through in red and insertions in blue">${busy && busy.startsWith('pdf-diff') ? html`<${Spinner} small />` : Icon('doc')} Diff PDF</button>
           <button class="btn btn-ghost btn-sm" disabled=${!!busy || !decide} onClick=${() => pdfOut('revised')}>${busy && busy.startsWith('pdf-revised') ? html`<${Spinner} small />` : Icon('doc')} Revised PDF</button>` : null}
-          <a class="btn btn-ghost btn-sm" href=${`/api/projects/${p.id}/export/diff.zip`}>${Icon('download')} Diff project (.zip)</a>
-          <a class="btn btn-ghost btn-sm" href=${`/api/projects/${p.id}/export/revised.zip`}>${Icon('download')} Revised project (.zip)</a><a class="btn btn-text btn-sm" href=${`/api/projects/${p.id}/export/diff.txt`}>Diff (.txt)</a></div>
+          <button class="btn btn-ghost btn-sm" disabled=${!!busy || !decide} onClick=${() => zipOut('diff')}>${busy === 'zip-diff' ? html`<${Spinner} small />` : Icon('download')} Diff project (.zip)</button>
+          <button class="btn btn-ghost btn-sm" disabled=${!!busy || !decide} onClick=${() => zipOut('revised')}>${busy === 'zip-revised' ? html`<${Spinner} small />` : Icon('download')} Revised project (.zip)</button><button class="btn btn-text btn-sm" disabled=${!!busy} onClick=${() => import('./exports.js').then(m => m.downloadText(p, 'diff.txt')).catch(toastError)}>Diff (.txt)</button></div>
         ${busy && busy.startsWith('pdf-') ? html`<p class="tiny faint">${busy.slice(busy.indexOf(':') + 1)}</p>` : p.compileBridge ? html`<p class="tiny faint">PDFs are compiled on your computer by Rykhet LaTeX (the desktop app's TeX if you use it, otherwise TeX in the browser). The first time, the browser downloads the TeX engine once.</p>` : html`<p class="tiny faint">The diff project has the changes marked latexdiff style; compile it with your own TeX (latexmk -pdf).</p>`}
       </div>
     </div>

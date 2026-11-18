@@ -278,6 +278,7 @@ function Export({ p }) {
   const [busy, setBusy] = useState(null);
   const decide = p.canDecide;
   const dl = kind => { location.href = `/api/projects/${p.id}/export/${kind}`; };
+  // everything but the data dump is made on this computer (exports.js): the server only hands over stored files
   const annotated = async mode => { setBusy(mode); try { const m = await import('./report.js'); await m.annotatedPdf(p, mode); } catch (e) { console.error(e); toastError(e); } setBusy(null); };
   const report = async () => { const m = await import('./report.js'); m.printReport(p); };
   const [stage, setStage] = useState('');
@@ -287,30 +288,36 @@ function Export({ p }) {
     if (p.source.kind === 'latex') { const m = await import('./source.js'); const r = await m.compilePdf(p, 'diff', setStage); toast(`Diff PDF ready: ${r.marked} changed paragraph${r.marked === 1 ? '' : 's'} marked`, 'ok', 7000); }
     else { const m = await import('./report.js'); await m.diffPdf(p); toast('Diff PDF ready', 'ok'); }
   });
-  // the whole revised project into Rykhet LaTeX (a share there: "Make my copy", edit, compile, "Send to Studio")
+  // the whole revised project into Rykhet LaTeX (opens in the full editor: edit, compile, "Send to Studio")
   const openLatex = () => run('latex', async () => {
     const r = await api(`/api/projects/${p.id}/latex-share`, { method: 'POST', body: {} });
     window.open(r.url, '_blank', 'noopener');
-    toast('Opened in Rykhet LaTeX with the whole revised project. Choose “Make my copy”, edit and compile there, then press “Send to Studio” to review the edits here.', 'ok', 10000);
+    toast('Opened in Rykhet LaTeX with the whole revised project. Edit and compile there (on your computer), then press “Send to Studio” to review the edits here.', 'ok', 10000);
     getStore(p.id).refetch(100);
+  });
+  const dlx = kind => run(kind, async () => {
+    const m = await import('./exports.js');
+    if (kind === 'diff.zip' || kind === 'revised.zip') await m.downloadProject(p, kind.split('.')[0], setStage);
+    else if (kind === 'changes.md?rejected=1') await m.downloadText(p, 'changes.md', { rejected: true });
+    else await m.downloadText(p, kind);
   });
   const revisedPdf = () => run('revised', async () => { const m = await import('./source.js'); await m.compilePdf(p, 'revised', setStage); toast('Revised PDF ready', 'ok'); });
   const spin = (key, ic) => (busy === key ? html`<${Spinner} small />` : ic ? Icon(ic) : null);
   const Card = ({ icon, title, desc, children, tag }) => html`<div class="card x-card"><div class="x-ic">${Icon(icon)}</div><div class="grow"><h3>${title} ${tag ? html`<span class="chip c-brand">${tag}</span>` : ''}</h3><p class="muted small">${desc}</p><div class="row-wrap">${children}</div></div></div>`;
   return html`<div class="x-grid">
     ${decide ? html`<${Card} icon="doc" title="Diff PDF" tag=${p.source.kind === 'latex' ? 'compiled on your computer' : 'PDF'} desc=${p.source.kind === 'latex' ? `Your manuscript typeset with every change marked, latexdiff style: deletions struck through in red, insertions underlined in blue. ${p.compileBridge ? 'Compiled on your computer by Rykhet LaTeX (TeX in the browser or the desktop app), never on the server.' : 'Download the marked-up project and compile it with your TeX.'}` : 'Every changed paragraph, original against current, in reading order: deletions struck through in red, insertions underlined in blue.'}>
-      ${p.source.kind === 'latex' && !p.compileBridge ? html`<button class="btn btn-primary" onClick=${() => dl('diff.zip')}>${Icon('download')} Diff project (.zip)</button><span class="tiny faint">Compile it with your TeX (latexmk -pdf).</span>` : html`<button class="btn btn-primary" disabled=${!!busy} onClick=${diffPdf}>${spin('diff', 'download')} Diff PDF</button>${p.source.kind === 'latex' ? html`<button class="btn btn-ghost" disabled=${!!busy} onClick=${revisedPdf}>${spin('revised', 'doc')} Revised PDF</button><button class="btn btn-text" onClick=${() => dl('diff.zip')}>Diff project (.zip)</button>` : null}`}
+      ${p.source.kind === 'latex' && !p.compileBridge ? html`<button class="btn btn-primary" disabled=${!!busy} onClick=${() => dlx('diff.zip')}>${Icon('download')} Diff project (.zip)</button><span class="tiny faint">Compile it with your TeX (latexmk -pdf).</span>` : html`<button class="btn btn-primary" disabled=${!!busy} onClick=${diffPdf}>${spin('diff', 'download')} Diff PDF</button>${p.source.kind === 'latex' ? html`<button class="btn btn-ghost" disabled=${!!busy} onClick=${revisedPdf}>${spin('revised', 'doc')} Revised PDF</button><button class="btn btn-text" disabled=${!!busy} onClick=${() => dlx('diff.zip')}>Diff project (.zip)</button>` : null}`}
       ${stage ? html`<span class="tiny faint">${stage}</span>` : null}</${Card}>` : null}
     ${p.source.kind === 'pdf' && decide ? html`<${Card} icon="doc" title="Annotated PDF" tag="side notes" desc="Your original pages with a margin of numbered notes: applied changes, open suggestions and comments, each with its diff. Ready to work through or send to co-authors.">
       <button class="btn btn-primary" disabled=${!!busy} onClick=${() => annotated('all')}>${busy === 'all' ? html`<${Spinner} small />` : Icon('download')} Everything</button><button class="btn btn-ghost" disabled=${!!busy} onClick=${() => annotated('open')}>${busy === 'open' ? html`<${Spinner} small />` : null} Open items only</button></${Card}>` : null}
     ${p.source.kind === 'latex' && decide ? html`<${Card} icon="doc" title="Revised LaTeX project" tag="ready to compile" desc=${`The whole project: every .tex file with the accepted changes written in at their exact source positions, with the bibliography, figures and styles. ${p.latexEnabled ? 'Open it in Rykhet LaTeX to keep editing and compiling, then send it back here: the edits arrive as recorded changes and the checks run again.' : 'Download it and compile with your own TeX.'}`}>
       ${p.latexEnabled ? html`<button class="btn btn-primary" disabled=${!!busy} onClick=${openLatex}>${spin('latex', 'external')} Open in Rykhet LaTeX</button>` : null}
-      <button class=${`btn ${p.latexEnabled ? 'btn-ghost' : 'btn-primary'}`} onClick=${() => dl('revised.zip')}>${Icon('download')} Project (.zip)</button>
+      <button class=${`btn ${p.latexEnabled ? 'btn-ghost' : 'btn-primary'}`} disabled=${!!busy} onClick=${() => dlx('revised.zip')}>${Icon('download')} Project (.zip)</button>
       ${p.latexEnabled && p.latexShare ? html`<a class="btn btn-text" href=${`/app/p/${p.id}/source?pull=1`}>${Icon('download')} Bring changes back</a>` : null}</${Card}>` : null}
     <${Card} icon="layers" title="Change list" desc=${decide ? 'Every applied change, open suggestion and comment, grouped by section and paragraph, with who proposed it. Markdown keeps formatting; plain text works anywhere.' : 'Your own suggestions and comments, grouped by section.'}>
-      <button class="btn btn-primary" onClick=${() => dl('changes.md')}>${Icon('download')} Markdown</button><button class="btn btn-ghost" onClick=${() => dl('changes.txt')}>Plain text</button>${decide ? html`<button class="btn btn-text" onClick=${() => dl('changes.md?rejected=1')}>With rejected</button>` : null}</${Card}>
+      <button class="btn btn-primary" disabled=${!!busy} onClick=${() => dlx('changes.md')}>${Icon('download')} Markdown</button><button class="btn btn-ghost" disabled=${!!busy} onClick=${() => dlx('changes.txt')}>Plain text</button>${decide ? html`<button class="btn btn-text" disabled=${!!busy} onClick=${() => dlx('changes.md?rejected=1')}>With rejected</button>` : null}</${Card}>
     ${decide ? html`<${Card} icon="refresh" title="Diff" desc="Unified diff of every changed paragraph: original against current text, with section, page and source line.">
-      <button class="btn btn-ghost" onClick=${() => dl('diff.txt')}>${Icon('download')} .diff</button>${p.source.kind === 'pdf' ? html`<button class="btn btn-ghost" onClick=${() => dl('revised.txt')}>Revised full text</button>` : null}</${Card}>` : null}
+      <button class="btn btn-ghost" disabled=${!!busy} onClick=${() => dlx('diff.txt')}>${Icon('download')} .diff</button>${p.source.kind === 'pdf' ? html`<button class="btn btn-ghost" disabled=${!!busy} onClick=${() => dlx('revised.txt')}>Revised full text</button>` : null}</${Card}>` : null}
     ${decide ? html`<${Card} icon="chart" title="Review report" desc=${`Reading progress and integrity per reader, all findings (consistency, ${p.ai.enabled ? 'AI, ' : ''}evidence${p.refcheckEnabled ? ', references' : ''}) and every change with its diff. Made as a PDF in your browser.`}>
       <button class="btn btn-primary" disabled=${!!busy} onClick=${reportPdf}>${spin('report', 'download')} Report (PDF)</button><button class="btn btn-ghost" onClick=${report}>${Icon('doc')} Print view</button><button class="btn btn-text" onClick=${() => dl('data.json')}>All data (.json)</button></${Card}>` : null}
   </div>`;
