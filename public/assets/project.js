@@ -64,6 +64,15 @@ function Welcome({ p }) {
 }
 
 // ── Overview ───────────────────────────────────────────────
+/** A reader's reading quality: score chip, with the evidence in its tooltip and beside it. */
+function ReadingQuality({ q }) {
+  if (!q) return html`<span class="faint">—</span>`;
+  const cls = q.verdict === 'careful' ? 'c-ok' : q.verdict === 'mixed' ? 'c-warn' : 'c-bad';
+  const label = q.verdict === 'careful' ? 'Careful' : q.verdict === 'mixed' ? 'Mixed' : 'Skimming';
+  const tip = [`${q.paragraphs} paragraphs read`, q.wpm ? `median pace ${q.wpm} words/min` : null, `${q.fast} faster than 500 words/min`, `${q.unseen} with the end never on screen`, `left the tab ${q.away} times`].filter(Boolean).join(' · ');
+  return html`<span class="rq" title=${tip}><span class=${`chip ${cls}`}>${label} ${q.score}</span>${q.fast ? html`<small>${q.fast} fast</small>` : null}${q.wpm ? html`<small>${q.wpm} wpm</small>` : null}</span>`;
+}
+
 function Overview({ p }) {
   const st = p.stats;
   const readers = p.members.filter(m => m.role !== 'owner' && m.status === 'active');
@@ -86,12 +95,12 @@ function Overview({ p }) {
       </div>
       ${decide ? html`<div class="card pad">
         <div class="row"><h3 class="card-h grow">Proofreaders</h3>${p.role === 'owner' ? html`<a class="btn btn-ghost btn-sm" href=${`/app/p/${p.id}/people`}>${Icon('plus')} Invite</a>` : null}</div>
-        ${readers.length ? html`<table class="readers"><thead><tr><th>Reader</th><th>Progress</th><th title="Share of reading checks passed">Checks</th><th title="Paragraphs read faster than plausible">Fast</th><th>Time</th><th>Notes</th><th>Active</th></tr></thead><tbody>
+        ${readers.length ? html`<table class="readers"><thead><tr><th>Reader</th><th>Progress</th><th title="Share of reading checks passed">Checks</th><th title="How carefully they read: pace, whether each paragraph's end was on screen, tab switches and checks passed">Reading</th><th>Time</th><th>Notes</th><th>Active</th></tr></thead><tbody>
           ${readers.map(m => { const pr = m.progress || { read: 0, total, checks: { asked: 0, passed: 0 }, fast: 0, time: 0 }; const notes = p.suggestions.filter(s => s.by === m.sub).length; const rate = pr.checks.asked ? pr.checks.passed / pr.checks.asked : null; return html`<tr>
             <td><div class="row"><${Avatar} name=${m.name} sub=${m.sub} size=${28} /><div><b>${m.name}</b><div class="faint tiny">${m.role}</div></div></div></td>
             <td style="min-width:140px"><div class="row"><${Bar} value=${pr.read / total} cls=${pr.done ? 'ok' : ''} /><span class="tiny nowrap">${pr.read}/${total}</span></div></td>
             <td>${rate == null ? html`<span class="faint">—</span>` : html`<span class=${`chip ${rate >= 0.8 ? 'c-ok' : rate >= 0.5 ? 'c-warn' : 'c-bad'}`}>${pr.checks.passed}/${pr.checks.asked}</span>`}</td>
-            <td>${pr.fast ? html`<span class="chip c-warn" title="Paragraphs marked read faster than ~450 words/min">${pr.fast}</span>` : html`<span class="faint">0</span>`}</td>
+            <td><${ReadingQuality} q=${pr.quality} /></td>
             <td class="nowrap">${fmtMin(pr.time)}</td><td>${notes}</td><td class="faint small nowrap">${pr.last ? ago(pr.last) : 'not started'}</td></tr>`; })}
         </tbody></table>` : html`<${Empty} icon="users" title="No proofreaders yet">${p.role === 'owner' ? html`Invite people by email from the <a href=${`/app/p/${p.id}/people`}>People</a> tab.` : 'The owner has not invited anyone yet.'}</${Empty}>`}
       </div>` : null}
@@ -210,7 +219,9 @@ function Settings({ p }) {
       <label class="field"><span>Target date</span><input class="input" type="date" value=${s.deadline || ''} onInput=${e => set('deadline', e.target.value || null)} /></label>
       <h3 class="mini-h">Reading checks</h3>
       <${Sw} path="checks.enabled" title="Ask reading checks" desc=${p.ai.enabled ? 'AI-written multiple-choice questions about the paragraph just read.' : 'Fill-in-the-blank questions made from the paragraph just read.'} />
-      ${s.checks.enabled ? html`<div class="opt sub"><div><b>How often</b><span>Plus always when a paragraph is marked read implausibly fast.</span></div><div class="seg">${[['every', 'Every'], ['often', 'Often'], ['sometimes', 'Sometimes'], ['rare', 'Rarely']].map(([k, l]) => html`<button class=${s.checks.freq === k ? 'on' : ''} onClick=${() => set('checks.freq', k)}>${l}</button>`)}</div></div>
+      ${s.checks.enabled ? html`<div class="opt sub"><div><b>How often</b><span>For shorter paragraphs. Always when a paragraph is marked read faster than 500 words a minute or its end was never on screen.</span></div><div class="seg">${[['every', 'Every'], ['often', 'Often'], ['sometimes', 'Sometimes'], ['rare', 'Rarely']].map(([k, l]) => html`<button class=${s.checks.freq === k ? 'on' : ''} onClick=${() => set('checks.freq', k)}>${l}</button>`)}</div></div>
+      <${Sw} path="checks.long" title="Always check long paragraphs" desc="Every paragraph of 100 words or more ends with a question." />
+      <${Sw} path="checks.pace" title="Make readers read" desc="“Mark as read” unlocks only after enough active reading time (tab visible, not idle) and once the end of the paragraph has been on screen." />
       <${Sw} path="checks.requirePass" title="Require a correct answer" desc="A wrong answer sends the reader back to the paragraph (up to 3 tries)." />
       <${Sw} path="checks.owner" title="Check me too" desc="Also ask the owner when they read." />` : null}
     </div>
@@ -276,6 +287,13 @@ function Export({ p }) {
     if (p.source.kind === 'latex') { const m = await import('./source.js'); const r = await m.compilePdf(p, 'diff', setStage); toast(`Diff PDF ready: ${r.marked} changed paragraph${r.marked === 1 ? '' : 's'} marked`, 'ok', 7000); }
     else { const m = await import('./report.js'); await m.diffPdf(p); toast('Diff PDF ready', 'ok'); }
   });
+  // the whole revised project into Rykhet LaTeX (a share there: "Make my copy", edit, compile, "Send to Studio")
+  const openLatex = () => run('latex', async () => {
+    const r = await api(`/api/projects/${p.id}/latex-share`, { method: 'POST', body: {} });
+    window.open(r.url, '_blank', 'noopener');
+    toast('Opened in Rykhet LaTeX with the whole revised project. Choose “Make my copy”, edit and compile there, then press “Send to Studio” to review the edits here.', 'ok', 10000);
+    getStore(p.id).refetch(100);
+  });
   const revisedPdf = () => run('revised', async () => { const m = await import('./source.js'); await m.compilePdf(p, 'revised', setStage); toast('Revised PDF ready', 'ok'); });
   const spin = (key, ic) => (busy === key ? html`<${Spinner} small />` : ic ? Icon(ic) : null);
   const Card = ({ icon, title, desc, children, tag }) => html`<div class="card x-card"><div class="x-ic">${Icon(icon)}</div><div class="grow"><h3>${title} ${tag ? html`<span class="chip c-brand">${tag}</span>` : ''}</h3><p class="muted small">${desc}</p><div class="row-wrap">${children}</div></div></div>`;
@@ -285,8 +303,10 @@ function Export({ p }) {
       ${stage ? html`<span class="tiny faint">${stage}</span>` : null}</${Card}>` : null}
     ${p.source.kind === 'pdf' && decide ? html`<${Card} icon="doc" title="Annotated PDF" tag="side notes" desc="Your original pages with a margin of numbered notes: applied changes, open suggestions and comments, each with its diff. Ready to work through or send to co-authors.">
       <button class="btn btn-primary" disabled=${!!busy} onClick=${() => annotated('all')}>${busy === 'all' ? html`<${Spinner} small />` : Icon('download')} Everything</button><button class="btn btn-ghost" disabled=${!!busy} onClick=${() => annotated('open')}>${busy === 'open' ? html`<${Spinner} small />` : null} Open items only</button></${Card}>` : null}
-    ${p.source.kind === 'latex' && decide ? html`<${Card} icon="doc" title="Revised LaTeX" tag="ready to compile" desc="Your project with every accepted change written into the .tex files (exact source positions), plus untouched figures and styles.">
-      <button class="btn btn-primary" onClick=${() => dl('revised.zip')}>${Icon('download')} Project (.zip)</button><button class="btn btn-ghost" onClick=${() => dl('revised.tex')}>Main .tex only</button>${p.latexEnabled ? html`<a class="btn btn-text" href="https://latex.rykhet.com" target="_blank" rel="noopener">${Icon('external')} Open Rykhet LaTeX</a>` : null}</${Card}>` : null}
+    ${p.source.kind === 'latex' && decide ? html`<${Card} icon="doc" title="Revised LaTeX project" tag="ready to compile" desc=${`The whole project: every .tex file with the accepted changes written in at their exact source positions, with the bibliography, figures and styles. ${p.latexEnabled ? 'Open it in Rykhet LaTeX to keep editing and compiling, then send it back here: the edits arrive as recorded changes and the checks run again.' : 'Download it and compile with your own TeX.'}`}>
+      ${p.latexEnabled ? html`<button class="btn btn-primary" disabled=${!!busy} onClick=${openLatex}>${spin('latex', 'external')} Open in Rykhet LaTeX</button>` : null}
+      <button class=${`btn ${p.latexEnabled ? 'btn-ghost' : 'btn-primary'}`} onClick=${() => dl('revised.zip')}>${Icon('download')} Project (.zip)</button>
+      ${p.latexEnabled && p.latexShare ? html`<a class="btn btn-text" href=${`/app/p/${p.id}/source?pull=1`}>${Icon('download')} Bring changes back</a>` : null}</${Card}>` : null}
     <${Card} icon="layers" title="Change list" desc=${decide ? 'Every applied change, open suggestion and comment, grouped by section and paragraph, with who proposed it. Markdown keeps formatting; plain text works anywhere.' : 'Your own suggestions and comments, grouped by section.'}>
       <button class="btn btn-primary" onClick=${() => dl('changes.md')}>${Icon('download')} Markdown</button><button class="btn btn-ghost" onClick=${() => dl('changes.txt')}>Plain text</button>${decide ? html`<button class="btn btn-text" onClick=${() => dl('changes.md?rejected=1')}>With rejected</button>` : null}</${Card}>
     ${decide ? html`<${Card} icon="refresh" title="Diff" desc="Unified diff of every changed paragraph: original against current text, with section, page and source line.">

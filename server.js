@@ -49,6 +49,7 @@ const mailer = createMailer({ host: env.SMTP_HOST, port: env.SMTP_PORT, mode: en
 const ai = createAssist(); // rule-based reading checks and evidence checks (no AI service)
 const CHECKS = () => (ai.checks ?? ai.enabled);
 // PDFs compiled on the user's computer through Rykhet LaTeX (it accepts the hosted site and local development only)
+const LATEX_SITE = env.LATEX_SITE || 'https://latex.rykhet.com';
 const BRIDGE = env.COMPILE_BRIDGE ? env.COMPILE_BRIDGE === '1' : !!env.LATEX_KEY;
 // Retraction Radar (rr.rykhet.com): authors' Retraction Exposure, server to server
 const RR_ON = !!(env.RR_KEY && env.RR_URL);
@@ -130,10 +131,12 @@ function emitPresence(p) { if (presTimers.has(p.id)) return; presTimers.set(p.id
 setInterval(() => { for (const set of streams.values()) for (const c of set) { try { c.res.write(': hb\n\n'); } catch { /* closed */ } } }, 20000).unref();
 
 // ── Defaults ───────────────────────────────────────────────
-const DEFAULT_SETTINGS = { checks: { enabled: true, freq: 'sometimes', requirePass: true, owner: false }, ai: { readers: true }, blind: false, refsInReading: false, allowDownload: false, watermark: true, deadline: null, instructions: '', order: 'sequential' };
+const DEFAULT_SETTINGS = { checks: { enabled: true, freq: 'sometimes', requirePass: true, owner: false, long: true, pace: true }, ai: { readers: true }, blind: false, refsInReading: false, allowDownload: false, watermark: true, deadline: null, instructions: '', order: 'sequential' };
 const FREQ = { every: 1, often: 0.5, sometimes: 0.25, rare: 0.12 };
 const READ_KINDS = new Set(['title', 'abstract', 'para', 'list', 'caption', 'equation', 'footnote']);
 const QUIZ_KINDS = new Set(['abstract', 'para', 'list']);
+// reading pace: faster than READ_WPM is skimming, not proofreading; paragraphs of LONG_WORDS or more always get a check
+const READ_WPM = 500, LONG_WORDS = 100;
 const REVIEW_KINDS = new Set(['title', 'abstract', 'para', 'list', 'caption', 'footnote']);
 const readingSet = p => (p.blocks || []).filter(b => READ_KINDS.has(b.kind) || (b.kind === 'ref' && p.settings.refsInReading));
 const plain = (p, b) => tk.blockText(b, p.latex || {});
@@ -202,7 +205,35 @@ function memberSummary(p, m, full) {
   const base = { sub: m.sub, name: m.name, email: full ? m.email : undefined, role: m.role, status: m.status, joined: m.joined };
   if (!full || !pr) return base;
   const read = Object.values(pr.read || {});
-  return { ...base, progress: { read: read.length, total, time: pr.time || 0, checks: pr.checks || { asked: 0, passed: 0, failed: 0 }, fast: pr.fast || 0, done: !!pr.done, last: pr.last || null, cur: pr.cur || null, words: pr.words || 0 } };
+  return { ...base, progress: { read: read.length, total, time: pr.time || 0, checks: pr.checks || { asked: 0, passed: 0, failed: 0 }, fast: pr.fast || 0, done: !!pr.done, last: pr.last || null, cur: pr.cur || null, words: pr.words || 0, quality: readingQuality(p, pr) } };
+}
+/**
+ * How carefully a reader read, from what they did on each paragraph of 30+ words: the pace (words per minute of active
+ * reading; above READ_WPM is skimming), whether its end was scrolled into view, how often they left the tab, and the
+ * reading checks they passed. Score 0-100: pace 50 %, seen 20 %, checks 30 % (pace stands in while no check was asked).
+ */
+function readingQuality(p, pr) {
+  const byId = new Map(p.blocks.map(b => [b.id, b]));
+  let n = 0, fast = 0, unseen = 0, away = 0;
+  const wpms = [];
+  for (const [bid, r] of Object.entries(pr.read || {})) {
+    const b = byId.get(bid);
+    if (!b || !QUIZ_KINDS.has(b.kind)) continue;
+    const w = wordsOf(p, b);
+    if (w < 30) continue;
+    n++;
+    const wpm = r.ms > 0 ? w / (r.ms / 60000) : Infinity;
+    if (Number.isFinite(wpm)) wpms.push(wpm);
+    if (wpm > READ_WPM) fast++;
+    if (r.seen != null && r.seen < 0.9) unseen++;
+    away += r.hid || 0;
+  }
+  if (!n) return null;
+  wpms.sort((a, b) => a - b);
+  const c = pr.checks || { asked: 0, passed: 0 };
+  const pace = 1 - fast / n, seen = 1 - unseen / n, pass = c.asked ? c.passed / c.asked : pace;
+  const score = Math.round(100 * (0.5 * pace + 0.2 * seen + 0.3 * pass));
+  return { score, verdict: score >= 85 ? 'careful' : score >= 60 ? 'mixed' : 'skimming', paragraphs: n, fast, unseen, away, wpm: wpms.length ? Math.round(wpms[wpms.length >> 1]) : null };
 }
 function sugVisible(p, s, me, role) { return atLeast(role, 'editor') || !p.settings.blind || s.by === me || s.by === 'ai' || s.status === 'accepted'; }
 function sugView(s) { const { base, ...rest } = s; return { ...rest, base }; }
@@ -221,7 +252,7 @@ function projectView(p, s) {
     id: p.id, title: p.title, owner: p.owner, created: p.created, updated: p.updated, rev: p.rev || 0, role,
     me: { sub: s.sub, name: meName(s), email: s.e, admin: isAdmin(s) },
     source: { kind: p.source.kind, filename: p.source.filename, pages: p.source.pages, main: p.source.main, files: (p.source.files || []).map(f => f.name), uploaded: !!p.source.uploaded, pageImages: !!p.source.pageImages, pageExt: p.source.pageExt || 'webp', layoutVer: p.source.layoutVer || 0, pdfPaired: !!p.source.pdfPaired, pdfName: p.source.pdfName || null, pdfFile: p.source.pdfFile || null, original: p.source.original || null, notes: p.source.notes || [], canDownload: full || !!p.settings.allowDownload },
-    latexShare: full ? p.latexShare || null : undefined, latexEnabled: !!env.LATEX_KEY, compileBridge: BRIDGE, rexpEnabled: full && RR_ON, rexp: full && RR_ON ? rexpView(p) : undefined, latexReturn: full ? p.latexReturn || null : undefined, imported: p.imported || null, removedCount: (p.removedBlocks || []).length,
+    latexShare: full ? p.latexShare || null : undefined, latexEnabled: !!env.LATEX_KEY, compileBridge: BRIDGE, pace: { wpm: READ_WPM, long: LONG_WORDS }, rexpEnabled: full && RR_ON, rexp: full && RR_ON ? rexpView(p) : undefined, latexReturn: full ? p.latexReturn || null : undefined, imported: p.imported || null, removedCount: (p.removedBlocks || []).length,
     latex: p.latex, settings: p.settings,
     members: members.map(m => memberSummary(p, m, full)),
     invites: owner ? (p.invites || []).map(i => ({ id: i.id, email: i.email, role: i.role, status: i.status === 'pending' && Date.parse(i.expires) < Date.now() ? 'expired' : i.status, created: i.created, expires: i.expires, mail: i.mail, mailDetail: i.mailDetail, acceptedAt: i.acceptedAt })) : undefined,
@@ -427,15 +458,30 @@ function ruleQuiz(p, blocks) {
   try { storeQuiz(p, todo, assist.quiz({ items: todo.map((b, k) => ({ b: k + 1, text: plain(p, b) })) }), 'rules'); }
   catch (e) { console.error('[studio] rule quiz', e.message); }
 }
-function checkDue(p, s, b, pr, ms) {
+/** Words of a block's reading text (cached per text, blocks are read often). */
+const wordCache = new WeakMap();
+function wordsOf(p, b) {
+  const k = b.cur ?? b.text;
+  const c = wordCache.get(b);
+  if (c && c.k === k) return c.n;
+  const n = tk.countWords(plain(p, b));
+  wordCache.set(b, { k, n });
+  return n;
+}
+/**
+ * Is a reading check due? Always when the paragraph was marked read faster than READ_WPM (active reading time, as
+ * measured in the browser and capped by the server's own clock), when its end was never scrolled into view, or when it
+ * is long; otherwise as often as the owner chose.
+ */
+function checkDue(p, s, b, pr, ms, sig = {}) {
   const st = p.settings.checks;
   if (!st.enabled || !quizEligible(p, b)) return { due: false };
   const role = roleOf(p, s);
   if (role === 'owner' && !st.owner) return { due: false };
-  const words = tk.countWords(plain(p, b));
-  const minMs = (words / 450) * 60000 * 0.6;
-  const fast = ms < minMs;
-  if (fast) return { due: true, fast: true };
+  const words = wordsOf(p, b);
+  if (ms < (words / READ_WPM) * 60000) return { due: true, fast: true, why: 'fast' };
+  if (sig.seen != null && sig.seen < 0.9) return { due: true, why: 'unseen' };
+  if (st.long !== false && words >= LONG_WORDS) return { due: true, why: 'long' };
   if (st.freq === 'every') return { due: true };
   const since = pr.sinceCheck || 0;
   if (since >= (st.freq === 'often' ? 3 : st.freq === 'rare' ? 14 : 7)) return { due: true };
@@ -661,6 +707,43 @@ async function readBody(req, max = 200000) {
 }
 const fail = (status, error, extra = {}) => Object.assign(new Error(error), { status, extra });
 
+// ── "Proofread together" from Rykhet LaTeX ─────────────────
+// The editor hands a project over server to server (loopback, shared key, never through the tunnel); the owner's
+// browser then reads it on the new-manuscript page like a dropped folder. Kept in memory for a few hours.
+const handoffs = new Map(); // id -> { owner, name, main, files, pdf, editor, at }
+const HANDOFF_TTL = 6 * 3600e3;
+function editorCaller(req) {
+  const key = String(req.headers['x-internal-key'] || ''), want = String(env.LATEX_KEY || '');
+  const ok = want.length >= 32 && key.length === want.length && crypto.timingSafeEqual(Buffer.from(key), Buffer.from(want));
+  return ok && !req.headers['cf-connecting-ip'] && /^(127\.0\.0\.1|::1|::ffff:127\.0\.0\.1)$/.test(req.socket.remoteAddress || '');
+}
+async function handoffIn(req, res) {
+  if (!editorCaller(req)) return json(res, 403, { error: 'Forbidden' });
+  let b;
+  try { b = await readBody(req, 40_000_000); } catch (e) { return json(res, e.status || 400, { error: e.message }); }
+  const o = b.owner || {};
+  if (!/^[\w.:@-]{3,80}$/.test(String(o.sub || ''))) return json(res, 400, { error: 'owner.sub required' });
+  const files = (Array.isArray(b.files) ? b.files : []).filter(f => f && typeof f.path === 'string' && !f.path.includes('..') && (typeof f.text === 'string' || typeof f.base64 === 'string')).slice(0, 2000)
+    .map(f => ({ path: f.path.replace(/^\/+/, '').slice(0, 300), ...(typeof f.text === 'string' ? { text: f.text } : { base64: f.base64 }) }));
+  if (!files.some(f => /\.tex$/i.test(f.path))) return json(res, 400, { error: 'The project has no .tex file' });
+  const now = Date.now();
+  for (const [k, h] of handoffs) if (now - h.at > HANDOFF_TTL) handoffs.delete(k);
+  while (handoffs.size >= 30) handoffs.delete(handoffs.keys().next().value);
+  const id = U.shortId() + U.shortId();
+  const editor = b.editor && typeof b.editor.token === 'string' ? { token: b.editor.token.slice(0, 80), studio: typeof b.editor.studio === 'string' ? b.editor.studio.slice(0, 24) : null } : null;
+  handoffs.set(id, { owner: { sub: String(o.sub), email: String(o.email || ''), name: String(o.name || '') }, name: U.strT(b.name, 200) || 'Untitled', main: U.strT(b.main, 300) || 'main.tex', files, pdf: typeof b.pdf === 'string' && b.pdf.length ? b.pdf : null, editor, at: now });
+  return json(res, 200, { url: `${BASE}/app/new?handoff=${id}` });
+}
+/** Tell Rykhet LaTeX which Studio project its hand-off became, so "Send to Studio" and "Bring changes back" work. */
+async function linkEditor(p, h) {
+  if (!h.editor || !env.LATEX_KEY) return;
+  try {
+    const resp = await fetch(`${env.LATEX_URL || 'http://127.0.0.1:4130'}/internal/studio-link`, { method: 'POST', signal: AbortSignal.timeout(15000), headers: { 'Content-Type': 'application/json', 'X-Internal-Key': env.LATEX_KEY }, body: JSON.stringify({ token: h.editor.token, studioId: p.id, owner: p.owner }) });
+    if (!resp.ok) throw new Error(`Rykhet LaTeX ${resp.status}`);
+    p.latexShare = { url: `${LATEX_SITE}/s/${h.editor.token}`, at: U.now(), by: p.ownerName, changed: 0, from: 'editor' };
+  } catch (e) { console.error('[studio] link editor', e.message); }
+}
+
 // ── API ────────────────────────────────────────────────────
 async function api(req, res, p_, s, url) {
   const M = req.method;
@@ -687,6 +770,13 @@ async function api(req, res, p_, s, url) {
     }
     return json(res, 200, { mine: mine.sort((a, b) => String(b.updated).localeCompare(String(a.updated))), shared, invites });
   }
+  let hm;
+  if (M === 'GET' && (hm = p_.match(/^\/api\/handoff\/([A-Za-z0-9_-]{8,64})$/))) {
+    const h = handoffs.get(hm[1]);
+    if (!h || Date.now() - h.at > HANDOFF_TTL) throw fail(404, 'This hand-off has expired. In Rykhet LaTeX, press “Proofread together” again.');
+    if (h.owner.sub !== s.sub) throw fail(403, `Sign in with the Rykhet account you use in Rykhet LaTeX${h.owner.email ? ` (${h.owner.email})` : ''}.`);
+    return json(res, 200, { name: h.name, main: h.main, files: h.files, pdf: h.pdf, linked: !!(h.editor && h.editor.studio) });
+  }
   if (M === 'POST' && p_ === '/api/projects') {
     const owned = store.forUser(s.sub, s.e).mine.length;
     if (!isAdmin(s) && owned >= LIMITS.projects) throw fail(429, `You have ${owned} manuscripts. Delete some to add more.`);
@@ -701,6 +791,8 @@ async function api(req, res, p_, s, url) {
     if (b.settings && typeof b.settings === 'object') applySettings(p, b.settings);
     p.lint = { at: U.now(), issues: lint(p, tk), dismissed: {} };
     act(p, s, 'created', { detail: `${doc.blocks.length} blocks from ${doc.source.filename || doc.source.kind}` });
+    const h = typeof b.handoff === 'string' && handoffs.get(b.handoff);
+    if (h && h.owner.sub === s.sub && p.source.kind === 'latex') { await linkEditor(p, h); handoffs.delete(b.handoff); if (p.latexShare) act(p, s, 'latex-share', { detail: 'from Rykhet LaTeX' }); }
     await store.create(p);
     touchUser(s);
     logActivity({ kind: 'project', sub: s.sub, id: p.id, blocks: doc.blocks.length, source: doc.source.kind });
@@ -726,6 +818,8 @@ function applySettings(p, x) {
     if (FREQ[x.checks.freq]) st.checks.freq = x.checks.freq;
     if (typeof x.checks.requirePass === 'boolean') st.checks.requirePass = x.checks.requirePass;
     if (typeof x.checks.owner === 'boolean') st.checks.owner = x.checks.owner;
+    if (typeof x.checks.long === 'boolean') st.checks.long = x.checks.long;
+    if (typeof x.checks.pace === 'boolean') st.checks.pace = x.checks.pace;
   }
   if (x.ai && typeof x.ai.readers === 'boolean') st.ai.readers = x.ai.readers;
   for (const k of ['blind', 'refsInReading', 'allowDownload', 'watermark']) if (typeof x[k] === 'boolean') st[k] = x[k];
@@ -879,6 +973,7 @@ async function projectApi(req, res, p, s, role, rest, url) {
     if (pm && pm.has(s.sub)) { pm.get(s.sub).bid = b.id; pm.get(s.sub).at = Date.now(); emitPresence(p); }
     if (b0.view) {
       pr.cur = b.id;
+      pr.view = { bid: b.id, at: Date.now() }; // the server's own clock for how long this paragraph has been open
       // prepare reading checks for the next paragraphs in the background
       if (p.settings.checks.enabled && CHECKS()) {
         const set = readingSet(p); const i = set.indexOf(b);
@@ -887,7 +982,13 @@ async function projectApi(req, res, p, s, role, rest, url) {
       save({ index: false, delay: 3000 });
       return json(res, 200, { ok: true });
     }
-    const ms = U.int(b0.ms, 0, 3_600_000, 0);
+    // reading behaviour from the browser: active ms (tab visible, window in use, not idle), times the reader left the
+    // tab, idle ms, and how much of the paragraph was scrolled into view; the active time can't exceed the open time
+    const wall = pr.view && pr.view.bid === b.id ? Date.now() - pr.view.at : null;
+    let ms = U.int(b0.ms, 0, 3_600_000, 0);
+    if (wall != null) ms = Math.min(ms, wall + 2000);
+    const sig = { hid: U.int(b0.hid, 0, 1000, 0), idle: U.int(b0.idle, 0, 3_600_000, 0), seen: b0.seen == null ? null : U.num(b0.seen, 0, 1, 1) };
+    const beh = r0 => { const words = wordsOf(p, b); const tot = ((r0 && r0.ms) || 0) + ms; return { wpm: tot > 0 ? Math.round(words / (tot / 60000)) : null, seen: sig.seen == null ? (r0 && r0.seen) ?? null : Math.max(sig.seen, (r0 && r0.seen) || 0), hid: ((r0 && r0.hid) || 0) + sig.hid, idle: ((r0 && r0.idle) || 0) + sig.idle }; };
     pr.time = (pr.time || 0) + Math.min(ms, 20 * 60000);
     const pend = p.pending && p.pending[s.sub];
     if (pend && pend.bid === b.id) {
@@ -899,23 +1000,24 @@ async function projectApi(req, res, p, s, role, rest, url) {
     }
     const prev = pr.read[b.id];
     if (!prev || prev.ok === false) {
-      const due = prev ? { due: false } : checkDue(p, s, b, pr, ms + ((prev && prev.ms) || 0));
+      const due = prev ? { due: false } : checkDue(p, s, b, pr, ms + ((prev && prev.ms) || 0), sig);
       if (due.fast) pr.fast = (pr.fast || 0) + 1;
+      if (due.why === 'unseen') pr.unseen = (pr.unseen || 0) + 1;
       if (due.due) {
         // a question is due: give the AI up to 20 s, then ask one made from the paragraph itself
         if (!(p.quiz && p.quiz[b.id] && p.quiz[b.id].items.length)) await Promise.race([ensureQuiz(p, [b.id]), new Promise(r => setTimeout(r, 20000))]).catch(() => {});
         if (!(p.quiz && p.quiz[b.id] && p.quiz[b.id].items.length)) ruleQuiz(p, [b]);
         const chk = issueCheck(p, s, b, pr, 0);
         if (chk) {
-          pr.read[b.id] = { at: U.now(), ms: ms + ((prev && prev.ms) || 0), ok: null, fast: !!due.fast };
+          pr.read[b.id] = { at: U.now(), ms: ms + ((prev && prev.ms) || 0), ok: null, fast: !!due.fast, ...beh(prev) };
           pr.sinceCheck = 0;
           save({ index: false });
-          return json(res, 200, { check: { ...chk, fast: !!due.fast } });
+          return json(res, 200, { check: { ...chk, fast: !!due.fast, why: due.why || null } });
         }
       }
       if (QUIZ_KINDS.has(b.kind)) pr.sinceCheck = (pr.sinceCheck || 0) + 1;
     }
-    pr.read[b.id] = { ...(pr.read[b.id] || {}), at: U.now(), ms: ((pr.read[b.id] && pr.read[b.id].ms) || 0) + ms, ok: pr.read[b.id] && pr.read[b.id].ok != null ? pr.read[b.id].ok : null };
+    pr.read[b.id] = { ...(pr.read[b.id] || {}), ...beh(pr.read[b.id]), at: U.now(), ms: ((pr.read[b.id] && pr.read[b.id].ms) || 0) + ms, ok: pr.read[b.id] && pr.read[b.id].ok != null ? pr.read[b.id].ok : null };
     const fin = finishedNow(p, s, pr);
     save({ index: false });
     emit(p, { t: 'progress', sub: s.sub, read: Object.keys(pr.read).length, done: !!pr.done }, c => atLeast(c.role, 'editor') || c.sub === s.sub);
@@ -1633,6 +1735,7 @@ async function handle(req, res) {
   if (!tk) await tkReady;
   const GET = req.method === 'GET' || req.method === 'HEAD';
 
+  if (p === '/internal/handoff' && req.method === 'POST') return handoffIn(req, res);
   if (p === '/healthz') return json(res, 200, { ok: true, build: BUILD, jobs: jobs.size, streams: [...streams.values()].reduce((n, x) => n + x.size, 0), mem: Math.round(process.memoryUsage().rss / 1048576) });
   if (GET && p === '/') return sendHtml(req, res, path.join(PUB, 'index.html'), { cookies: renewed(s) });
   if (GET && (p === '/license' || p === '/licence')) return sendHtml(req, res, path.join(PUB, 'license.html'), { cookies: renewed(s) });
@@ -1677,7 +1780,7 @@ async function handle(req, res) {
     return json(res, 200, { ok: true, next: nextOf(b0.next) }, [setCookie(SESSION, signSession(sess), DAYS * 86400)]);
   }
   if (GET && (p === '/app' || /^\/app\/(new|p\/[a-z0-9]{8,24}(\/[A-Za-z0-9_-]+){0,2}|invite\/[A-Za-z0-9_-]{20,80})$/.test(p))) {
-    if (!s) return redirect(res, `/sso/${/^\/app\/invite\//.test(p) && url.searchParams.get('signup') ? 'signup' : 'login'}?next=${encodeURIComponent(p)}`);
+    if (!s) return redirect(res, `/sso/${/^\/app\/invite\//.test(p) && url.searchParams.get('signup') ? 'signup' : 'login'}?next=${encodeURIComponent(p === '/app/new' && /^[A-Za-z0-9_-]{8,64}$/.test(url.searchParams.get('handoff') || '') ? `${p}?handoff=${url.searchParams.get('handoff')}` : p)}`);
     return sendHtml(req, res, path.join(PUB, 'app.html'), { cookies: renewed(s) });
   }
   if (p.startsWith('/api/')) {

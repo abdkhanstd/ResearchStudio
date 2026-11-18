@@ -127,6 +127,27 @@ export function NewPage() {
   const folder = useRef(null);
   const pdfIn = useRef(null);
   const [given, setGiven] = useState(null);
+  // "Proofread together" from Rykhet LaTeX: the project arrives here and is read like a dropped folder
+  const handoff = useRef(new URLSearchParams(location.search).get('handoff'));
+  const [from, setFrom] = useState(null);
+  useEffect(() => {
+    const hid = handoff.current;
+    if (!hid || !/^[A-Za-z0-9_-]{8,64}$/.test(hid)) return;
+    (async () => {
+      setStage('reading'); setProg({ v: 0.02, msg: 'Fetching the paper from Rykhet LaTeX…' });
+      try {
+        const h = await api(`/api/handoff/${hid}`);
+        const dir = (h.name || 'paper').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-').slice(0, 60) || 'paper';
+        const b64 = s => { const bin = atob(s); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u; };
+        const files = h.files.map(f => { const x = new File([typeof f.text === 'string' ? f.text : b64(f.base64)], f.path.split('/').pop()); x.relPath = `${dir}/${f.path}`; return x; });
+        const pdfName = (h.main || 'main.tex').replace(/\.tex$/i, '.pdf');
+        if (h.pdf && !h.files.some(f => f.path === pdfName)) { const x = new File([b64(h.pdf)], pdfName.split('/').pop(), { type: 'application/pdf' }); x.relPath = `${dir}/${pdfName}`; files.push(x); }
+        setFrom({ name: h.name, pdf: !!h.pdf });
+        await start(files, { main: h.main });
+        setTitle(t => t || h.name);
+      } catch (e) { toastError(e); handoff.current = null; setStage('pick'); }
+    })();
+  }, []);
   const start = async (files, choice = {}) => {
     if (!files || !files.length) return;
     const all = [...files];
@@ -147,9 +168,10 @@ export function NewPage() {
     setStage('creating'); setProg({ v: 0, msg: 'Creating the Proof Room…' });
     try {
       const settings = { checks: { enabled: opts.checks, freq: opts.freq, requirePass: true }, ai: { readers: opts.aiReaders }, blind: opts.blind };
-      const { id } = await api('/api/projects', { method: 'POST', body: payload(doc, title.trim() || doc.title, settings) });
+      const { id } = await api('/api/projects', { method: 'POST', body: { ...payload(doc, title.trim() || doc.title, settings), handoff: handoff.current || undefined } });
       await uploadAssets(id, doc, (v, msg) => setProg({ v, msg }));
       if (opts.precheck) await api(`/api/projects/${id}/ai/precheck`, { method: 'POST', body: {} }).catch(e => toast(e.message, 'bad'));
+      if (from) { toast('Your Proof Room is ready and linked to Rykhet LaTeX. Invite the people who should proofread it.', 'ok', 8000); navigate(`/app/p/${id}/people`); return; }
       toast('Your Proof Room is ready.', 'ok');
       navigate(`/app/p/${id}?welcome=1`);
     } catch (e) { toastError(e); setStage('review'); }
@@ -183,6 +205,7 @@ export function NewPage() {
       ${stage === 'reading' && canSkip ? html`<button class="btn btn-text btn-sm" onClick=${() => { skipOcr.current = true; }}>Skip text recognition in images</button>` : null}</div>` : null}
     ${stage === 'review' && doc ? html`<div class="review">
       <div class="card review-main">
+        ${from ? html`<div class="pair ok">${Icon('external')} <div><b>From Rykhet LaTeX:</b> ${from.name}${from.pdf ? ', with the PDF compiled there' : ', without a compiled PDF (compile in the editor and send again to show the paper as typeset)'}. The project stays linked: after you edit in the editor, “Send to Studio” brings the changes here to review and re-check.</div></div>` : null}
         <label class="field"><span>Title</span><input class="input title-input" value=${title} onInput=${e => setTitle(e.target.value)} /></label>
         ${doc.kind === 'latex' ? html`<div class="latex-box">
           <div class="row-wrap"><span class="chip c-brand">${Icon('doc')} LaTeX project</span><span class="small muted">${plural(doc.gathered.files.size, 'file')}</span>

@@ -6,15 +6,42 @@ import { promptDialog } from './lib.js';
 import { html, useState, useEffect, useRef, useMemo, useCallback, api, getStore, useStore, navigate, Icon, Avatar, Diff, Spinner, Bar, toast, toastError, openModal, closeModal, useKeys, CATS, catLabel, secLabel, blockPlain, tk, plural, fmtMin, KIND_LABEL, TexView, fmtDay, copyText } from './lib.js';
 import { BlockBody, SuggestionCard, IssueCard, referencedItems, RefItem, blockLabel, MARK_COLORS } from './blocks.js';
 
-function useTimer(key) {
-  const acc = useRef(0), since = useRef(performance.now());
+/**
+ * How a paragraph is being read: active ms (tab visible, the window in use, not idle for a minute), idle ms, how often
+ * the reader left the tab, and how much of the paragraph has been scrolled into view (0-1, of its current height).
+ * `get()` gives the numbers sent with "Mark as read"; `live` re-renders twice a second while the button waits.
+ */
+const IDLE_MS = 60000;
+function useReading(key, elRef) {
+  const st = useRef(null);
+  const [live, setLive] = useState({ ms: 0, seen: 0 });
   useEffect(() => {
-    acc.current = 0; since.current = document.visibilityState === 'visible' ? performance.now() : null;
-    const vis = () => { if (document.visibilityState === 'visible') since.current = performance.now(); else if (since.current != null) { acc.current += performance.now() - since.current; since.current = null; } };
-    document.addEventListener('visibilitychange', vis);
-    return () => document.removeEventListener('visibilitychange', vis);
+    const s = st.current = { ms: 0, idle: 0, hid: 0, seenPx: 0, lastAct: Date.now(), lastPtr: 0, tick: performance.now() };
+    const seenNow = () => {
+      const el = elRef.current, main = document.querySelector('.r-main');
+      if (!el) return 0;
+      const r = el.getBoundingClientRect(), vp = main ? main.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
+      if (r.height < 4) return 0;
+      s.seenPx = Math.max(s.seenPx, Math.min(r.bottom, vp.bottom) - r.top);
+      return Math.max(0, Math.min(1, s.seenPx / r.height));
+    };
+    const act = e => { s.lastAct = Date.now(); if (e && /mouse|pointer|wheel|touch/.test(e.type)) s.lastPtr = Date.now(); };
+    const away = () => { if (document.visibilityState !== 'visible') s.hid++; };
+    const blur = () => { s.hid++; };
+    const evs = ['mousemove', 'pointerdown', 'wheel', 'keydown', 'touchstart', 'scroll'];
+    for (const e of evs) window.addEventListener(e, act, { passive: true, capture: true });
+    document.addEventListener('visibilitychange', away);
+    window.addEventListener('blur', blur);
+    const t = setInterval(() => {
+      const now = performance.now(), dt = Math.min(2000, now - s.tick); s.tick = now;
+      const inUse = document.hasFocus() || Date.now() - s.lastPtr < 15000;
+      if (document.visibilityState === 'visible' && inUse && Date.now() - s.lastAct < IDLE_MS) s.ms += dt; else s.idle += dt;
+      setLive({ ms: s.ms, seen: seenNow() });
+    }, 500);
+    return () => { clearInterval(t); for (const e of evs) window.removeEventListener(e, act, { capture: true }); document.removeEventListener('visibilitychange', away); window.removeEventListener('blur', blur); };
   }, [key]);
-  return () => Math.round(acc.current + (since.current != null ? performance.now() - since.current : 0));
+  const get = () => { const s = st.current || { ms: 0, idle: 0, hid: 0 }; return { ms: Math.round(s.ms), idle: Math.round(s.idle), hid: s.hid, seen: +live.seen.toFixed(3) }; };
+  return { live, get };
 }
 
 export function Reader({ id, bid }) {
@@ -51,7 +78,16 @@ function ReaderInner({ p, store, bid }) {
   const [readLocal, setReadLocal] = useState(() => new Set(Object.keys(myProg.read || {})));
   const [outline, setOutline] = useState(() => window.innerWidth > 1280);
   const b = reading[idx];
-  const elapsed = useTimer(b && b.id);
+  const paperRef = useRef(null);
+  const rd = useReading(b && b.id, paperRef);
+  // pace: a paragraph can be marked read once it has had time to be read (at most READ_WPM words a minute of active
+  // reading, the same rule the server applies) and its end has been on screen; the owner is exempt unless checked too
+  const words = b ? tk.countWords(blockPlain(p, b)) : 0;
+  const paced = !!b && p.settings.checks.enabled && p.settings.checks.pace !== false && (p.role !== 'owner' || p.settings.checks.owner) && ['abstract', 'para', 'list'].includes(b.kind) && words >= 30 && !readLocal.has(b.id) && !reread;
+  const needMs = paced ? Math.min(120000, words / ((p.pace && p.pace.wpm) || 500) * 60000) : 0;
+  const waitMs = Math.max(0, needMs - rd.live.ms);
+  const unseen = paced && rd.live.seen < 0.9;
+  const held = paced && (waitMs > 0 || unseen);
   const total = reading.length;
   const readCount = readLocal.size;
   const sugs = p.suggestions.filter(s => s.bid === (b && b.id) && s.status !== 'withdrawn');
@@ -82,9 +118,10 @@ function ReaderInner({ p, store, bid }) {
   };
   const next = async () => {
     if (!b || busy) return;
+    if (held) { toast(waitMs > 0 ? `Keep reading: ${Math.ceil(waitMs / 1000)} s more for this paragraph.` : 'Scroll to the end of the paragraph first.', 'info', 2500); return; }
     setBusy(true);
     try {
-      const r = await api(`/api/projects/${p.id}/read`, { method: 'POST', body: { bid: b.id, ms: elapsed() } });
+      const r = await api(`/api/projects/${p.id}/read`, { method: 'POST', body: { bid: b.id, ...rd.get() } });
       if (r.check) { setBusy(false); return runCheck(r.check); }
       markRead(r);
     } catch (e) { toastError(e); }
@@ -106,7 +143,7 @@ function ReaderInner({ p, store, bid }) {
     ArrowRight: () => go(idx + 1), ArrowLeft: () => go(idx - 1), Enter: () => !panel && next(),
     e: () => startEdit(), c: () => startComment(), m: () => { if (view === 'page') setDrawing(d => !d); }, a: () => setSide('ai'), t: () => setView(v => (v === 'page' ? 'text' : 'page')), '?': () => showKeys(),
     'mod+Enter': () => panel && submit(), Escape: () => setPanel(null),
-  }, [idx, panel, draft, note, cat, busy, b && b.id, readLocal]);
+  }, [idx, panel, draft, note, cat, busy, b && b.id, readLocal, held]);
 
   // selection → comment / suggest
   const [sel, setSel] = useState(null);
@@ -146,7 +183,7 @@ function ReaderInner({ p, store, bid }) {
             ${p.source.pageImages && b.boxes && b.boxes.length ? html`<div class="paper-tabs seg" role="tablist" aria-label="View"><button class=${view === 'page' ? 'on' : ''} onClick=${() => setView('page')}>As typeset</button><button class=${view === 'text' ? 'on' : ''} onClick=${() => setView('text')}>Text</button></div>` : null}
             <span class="faint nowrap">${idx + 1} of ${total}</span></div>
           ${reread ? html`<div class="reread">${Icon('eye')} <div><b>Read this paragraph again carefully.</b> When you’re ready, press <span class="kbd">Enter</span> for another question.</div></div>` : null}
-          <article class=${`paper ${isRead ? 'is-read' : ''}`}>
+          <article ref=${paperRef} class=${`paper ${isRead ? 'is-read' : ''}`}>
             <${BlockBody} p=${p} b=${b} mode=${view === 'text' ? 'text' : 'auto'} showChanges=${true} big watermark=${watermark} drawing=${drawing && view === 'page'} onArea=${area => { setDrawing(false); mark({ area }, true); }} onMarkClick=${() => setSide('sugs')} />
             ${drawing && view === 'page' ? html`<div class="draw-hint">${Icon('crosshair')} Drag over the page to mark an area · <button class="btn btn-text btn-sm" onClick=${() => setDrawing(false)}>Cancel</button></div>` : null}
             ${p.source.kind === 'pdf' && view === 'page' && b.cur !== b.text ? null : null}
@@ -175,7 +212,7 @@ function ReaderInner({ p, store, bid }) {
           </div>` : null}
           <div class="r-nav">
             <button class="btn btn-ghost" disabled=${idx === 0} onClick=${() => go(idx - 1)}>${Icon('chevL')} Previous</button>
-            <button class="btn btn-primary btn-lg grow-sm" disabled=${busy} onClick=${next}>${busy ? html`<${Spinner} small />` : null} ${reread ? 'Ask me again' : isRead ? 'Next' : 'Mark as read & continue'} ${Icon('arrowR')} <span class="kbd light">↵</span></button>
+            <button class=${`btn btn-primary btn-lg grow-sm ${held ? 'held' : ''}`} style=${held ? `--fill:${Math.round(100 * Math.min(1, needMs ? rd.live.ms / needMs : 1))}%` : ''} disabled=${busy} onClick=${next} title=${held ? 'Each paragraph needs a moment of reading, and its end must be on screen, before you continue' : ''}>${busy ? html`<${Spinner} small />` : null} ${held ? (waitMs > 0 ? html`${Icon('clock')} Keep reading · ${Math.ceil(waitMs / 1000)} s` : html`${Icon('chevD')} Scroll to the end`) : html`${reread ? 'Ask me again' : isRead ? 'Next' : 'Mark as read & continue'} ${Icon('arrowR')} <span class="kbd light">↵</span>`}</button>
           </div>
           ${p.settings.checks.enabled && p.role === 'owner' && !p.settings.checks.owner ? html`<p class="faint tiny owner-checks">${Icon('target')} Reading checks go to your proofreaders; as the owner you are not asked. <button class="btn btn-text btn-sm" onClick=${() => askOwnerToo(p)}>Ask me too</button></p>` : null}
           ${p.settings.instructions && idx === 0 ? html`<div class="note-box"><b>From the owner</b><p>${p.settings.instructions}</p></div>` : null}
@@ -272,7 +309,7 @@ function CheckModal({ p, chk, onDone }) {
   useKeys({ 1: () => answer(0), 2: () => answer(1), 3: () => answer(2), 4: () => answer(3), _inModal: true, Enter: () => state.res && !state.res.correct && onDone(state.res) }, [state]);
   const { res } = state;
   return html`<div class="modal-body check">
-    <div class="check-top"><span class="chip c-brand">${Icon('target')} Reading check${state.chk.attempt > 1 ? ` · attempt ${state.chk.attempt}` : ''}</span>${state.chk.fast ? html`<span class="chip c-warn">That was quick</span>` : null}</div>
+    <div class="check-top"><span class="chip c-brand">${Icon('target')} Reading check${state.chk.attempt > 1 ? ` · attempt ${state.chk.attempt}` : ''}</span>${state.chk.fast ? html`<span class="chip c-warn">That was quick</span>` : state.chk.why === 'unseen' ? html`<span class="chip c-warn">The end wasn’t on screen</span>` : state.chk.why === 'long' ? html`<span class="chip">Long paragraph</span>` : null}</div>
     <h3>${state.chk.q}</h3>
     <div class="opts">${state.chk.options.map((o, i) => html`<button class=${`optn ${state.picked === i ? (res ? (res.correct ? 'ok' : 'bad') : 'sel') : ''}`} disabled=${!!res || state.busy} onClick=${() => answer(i)}><span class="kbd">${i + 1}</span><span>${o}</span></button>`)}</div>
     ${res && res.correct ? html`<div class="check-res ok">${Icon('check')} <div><b>Correct.</b> ${res.why || ''}</div></div>` : null}
@@ -314,7 +351,7 @@ function showIntro(p) {
       <li>${Icon('edit')}<div><b>Suggest edits or comment.</b> Select words to comment on them. ${p.canDecide ? 'As ' + p.role + ' you can also accept suggestions.' : 'The owner decides what goes in.'}</div></li>
       ${p.ai.enabled && (p.ai.readers || p.canDecide) ? html`<li>${Icon('sparkle')}<div><b>AI help.</b> Ask the AI to proofread a paragraph or improve the wording — it suggests, you judge.</div></li>` : null}
       <li>${Icon('layers')}<div><b>Check numbers.</b> The Context tab shows the tables and figures a paragraph mentions.</div></li>
-      ${p.settings.checks.enabled && !(p.role === 'owner' && !p.settings.checks.owner) ? html`<li>${Icon('target')}<div><b>Reading checks.</b> Now and then a short question confirms you read the paragraph.</div></li>` : null}
+      ${p.settings.checks.enabled && !(p.role === 'owner' && !p.settings.checks.owner) ? html`<li>${Icon('target')}<div><b>Read, then continue.</b> ${p.settings.checks.pace !== false ? 'Each paragraph needs a moment of reading, with its end on screen, before you can mark it read. ' : ''}${p.settings.checks.long !== false ? 'Long paragraphs end with a short question; others now and then' : 'Now and then a short question confirms you read the paragraph'}, and always when a paragraph is marked read too quickly.</div></li>` : null}
       ${p.settings.checks.enabled && p.role === 'owner' && !p.settings.checks.owner ? html`<li>${Icon('target')}<div><b>Reading checks</b> go to your proofreaders; as the owner you are not asked. <button class="btn btn-text btn-sm" onClick=${() => askOwnerToo(p)}>Ask me too</button></div></li>` : null}
       ${p.settings.deadline ? html`<li>${Icon('clock')}<div><b>Target date:</b> ${fmtDay(p.settings.deadline)}</div></li>` : null}
     </ul>

@@ -311,8 +311,10 @@ export function Crop({ p, boxes, pad = 6, padY = 1.2, maxWidth = 820, cls = '', 
   const [lay, setLay] = useState(null); // { W, H, parts: [{ p, sc, ox, oy, y, w, h }] } canvas px; ox/oy page-px origin of the part
   const [drag, setDrag] = useState(null);
   const key = JSON.stringify(boxes);
+  const [drawn, setDrawn] = useState(null); // the boxes the canvas shows now: never show one block's crop under another
   useEffect(() => {
     let dead = false;
+    setErr(false);
     (async () => {
       if (!boxes || !boxes.length) return;
       try {
@@ -344,6 +346,7 @@ export function Crop({ p, boxes, pad = 6, padY = 1.2, maxWidth = 820, cls = '', 
         });
         c.style.maxWidth = `${Math.min(maxWidth, W * (window.devicePixelRatio > 1 ? 0.75 : 1))}px`;
         setLay({ W, H, parts: out });
+        setDrawn(key);
         onSize && onSize(W, H);
       } catch { if (!dead) setErr(true); }
     })();
@@ -354,7 +357,7 @@ export function Crop({ p, boxes, pad = 6, padY = 1.2, maxWidth = 820, cls = '', 
   const pct = (v, tot) => `${(100 * v / tot).toFixed(3)}%`;
   const evPos = e => { const c = ref.current; const r = c.getBoundingClientRect(); const k = c.width / r.width; return { x: (e.clientX - r.left) * k, y: (e.clientY - r.top) * k }; };
   const dragRef = useRef(null); // the live drag (state only drives the drawing)
-  const down = e => { if (!drawing || !lay) return; e.preventDefault(); const s = evPos(e); dragRef.current = { a: s, b: s }; setDrag(dragRef.current); };
+  const down = e => { if (!drawing || !lay || drawn !== key) return; e.preventDefault(); const s = evPos(e); dragRef.current = { a: s, b: s }; setDrag(dragRef.current); };
   const move = e => { if (dragRef.current) { dragRef.current = { ...dragRef.current, b: evPos(e) }; setDrag(dragRef.current); } };
   const up = e => {
     const d = dragRef.current;
@@ -369,8 +372,10 @@ export function Crop({ p, boxes, pad = 6, padY = 1.2, maxWidth = 820, cls = '', 
     onArea && onArea(area);
   };
   if (err) return html`<div class="crop-missing">Page image not available</div>`;
-  return html`<div class=${`crop ${cls} ${drawing ? 'drawing' : ''}`} onMouseDown=${down} onMouseMove=${move} onMouseUp=${up} onMouseLeave=${up}><canvas ref=${ref} role="img" aria-label="The paragraph as typeset in the PDF"></canvas>
-    ${lay ? html`<div class="crop-marks">${marks.map(m => { const r = m.area && toCanvas(m.area); return r ? html`<span class=${`amark hl-${m.color || 'yellow'}`} title=${m.title || ''} onClick=${e => { e.stopPropagation(); onMarkClick && onMarkClick(m); }} style=${`left:${pct(r.x0, lay.W)};top:${pct(r.y0, lay.H)};width:${pct(r.x1 - r.x0, lay.W)};height:${pct(r.y1 - r.y0, lay.H)}`}></span>` : null; })}
+  const fresh = drawn === key;
+  return html`<div class=${`crop ${cls} ${drawing ? 'drawing' : ''} ${fresh ? '' : 'loading'}`} onMouseDown=${down} onMouseMove=${move} onMouseUp=${up} onMouseLeave=${up}><canvas ref=${ref} role="img" aria-label="The paragraph as typeset in the PDF" style=${fresh ? '' : 'visibility:hidden'}></canvas>
+    ${fresh ? null : html`<div class="crop-loading faint small">Loading the page…</div>`}
+    ${lay && fresh ? html`<div class="crop-marks">${marks.map(m => { const r = m.area && toCanvas(m.area); return r ? html`<span class=${`amark hl-${m.color || 'yellow'}`} title=${m.title || ''} onClick=${e => { e.stopPropagation(); onMarkClick && onMarkClick(m); }} style=${`left:${pct(r.x0, lay.W)};top:${pct(r.y0, lay.H)};width:${pct(r.x1 - r.x0, lay.W)};height:${pct(r.y1 - r.y0, lay.H)}`}></span>` : null; })}
       ${drag ? html`<span class="amark drafting" style=${`left:${pct(Math.min(drag.a.x, drag.b.x), lay.W)};top:${pct(Math.min(drag.a.y, drag.b.y), lay.H)};width:${pct(Math.abs(drag.b.x - drag.a.x), lay.W)};height:${pct(Math.abs(drag.b.y - drag.a.y), lay.H)}`}></span>` : null}</div>` : null}
     ${watermark ? html`<div class="wm" aria-hidden="true">${Array.from({ length: 6 }, () => html`<span>${watermark}</span>`)}</div>` : null}</div>`;
 }

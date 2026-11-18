@@ -38,16 +38,21 @@ export function BlockBody({ p, b, mode = 'auto', showChanges = false, big = fals
   const boxes = fl && fl.item.box ? withFloat(b.boxes || [], fl.item.box) : b.boxes;
   const textMode = mode === 'text' || !boxes || !boxes.length || !p.source.pageImages;
   useMarkHighlights(ref, textMode ? marks : [], [b.id, cur, textMode, marks.map(m => m.id + m.status).join(','), showChanges]);
+  const floatView = fl ? html`<div class="float-view">${fl.kind === 'table' ? html`<${TableGrid} grid=${fl.item.grid} max=${60} />` : html`<${FigureImage} p=${p} f=${fl.item} />`}</div>` : null;
   if (textMode) {
-    const floatView = fl ? html`<div class="float-view">${fl.kind === 'table' ? html`<${TableGrid} grid=${fl.item.grid} max=${60} />` : html`<${FigureImage} p=${p} f=${fl.item} />`}</div>` : null;
     if (showChanges && changed) return html`<div><div ref=${ref} class=${`text-view ${big ? 'big' : ''}`}><${Diff} a=${b.text} b=${cur} /></div>${floatView}</div>`;
     if (b.tex && mode !== 'source') return html`<div>${fl && fl.kind === 'figure' ? floatView : null}<div ref=${ref}><${TexView} src=${cur} ctx=${p.latex} cls=${`text-view ${big ? 'big' : ''} k-${b.kind}`} /></div>${fl && fl.kind === 'table' ? floatView : null}</div>`;
     return html`<div>${fl && fl.kind === 'figure' ? floatView : null}<div ref=${ref} class=${`text-view plain ${big ? 'big' : ''} k-${b.kind}`}>${cur}</div>${fl && fl.kind === 'table' ? floatView : null}</div>`;
   }
   const enlarge = () => openModal(close => html`<div class="modal-body zoom-body"><div class="row"><b class="grow">${fl.item.label}</b><button class="btn btn-text btn-sm" onClick=${close}>${Icon('x')}</button></div><${Crop} p=${p} boxes=${boxes} maxWidth=${2400} watermark=${watermark} /></div>`, { wide: true, cls: 'zoom-modal' });
+  // a caption is never shown without its float: when the PDF did not give one of the two a place, show it from the source
+  const capText = fl && !(b.boxes || []).length ? html`<div class=${`text-view ${big ? 'big' : ''} k-caption cap-above`}>${b.tex ? html`<${TexView} src=${cur} ctx=${p.latex} />` : cur}</div>` : null;
+  const floatBelow = fl && !fl.item.box ? floatView : null;
   return html`<div class="crop-wrap">
     ${fl ? html`<button class="btn btn-ghost btn-sm zoom-btn" onClick=${enlarge} title="Show at full size">${Icon('search')} Enlarge ${fl.kind}</button>` : null}
-    <${Crop} p=${p} boxes=${boxes} maxWidth=${fl ? 1000 : 820} watermark=${watermark} marks=${marks.filter(m => m.area).map(m => ({ id: m.id, area: m.area, color: m.color, title: `${m.byName}${m.note ? ': ' + m.note : ''}` }))} drawing=${drawing} onArea=${onArea} onMarkClick=${onMarkClick} />
+    ${capText}
+    <${Crop} key=${b.id} p=${p} boxes=${boxes} maxWidth=${fl ? 1000 : 820} watermark=${watermark} marks=${marks.filter(m => m.area).map(m => ({ id: m.id, area: m.area, color: m.color, title: `${m.byName}${m.note ? ': ' + m.note : ''}` }))} drawing=${drawing} onArea=${onArea} onMarkClick=${onMarkClick} />
+    ${floatBelow}
     ${showChanges && changed ? html`<div class="changed-note">${Icon('edit')} <b>Changed since upload:</b> <span class="text-view small"><${Diff} a=${b.text} b=${cur} compact /></span></div>` : null}
   </div>`;
 }

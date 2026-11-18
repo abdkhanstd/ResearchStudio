@@ -53,16 +53,22 @@ function gutterOfItems(items, width) {
     const iv = r.items.map(it => [it.x0, it.x1]).sort((a, b) => a[0] - b[0]);
     const out = [];
     for (const [a, b] of iv) { const last = out[out.length - 1]; if (last && a - last[1] < Math.max(2, 0.3 * r.h)) last[1] = Math.max(last[1], b); else out.push([a, b]); }
-    return out;
-  }).filter(s => s.length);
+    return { s: out, h: r.h };
+  }).filter(x => x.s.length);
   if (spans.length < 8) return null;
   const lo = Math.floor(width * 0.3), hi = Math.ceil(width * 0.7);
-  const split = new Uint16Array(hi + 2), cross = new Uint16Array(hi + 2);
-  for (const s of spans) {
+  // Rows of prose (one line, or two column lines with the gutter between them) have at most one wide gap. Rows of a
+  // table, of figure tick labels or of side-by-side cells have several, and their gaps line up row after row: in a
+  // full-width table they can outvote the real gutter, so they count for little (`strong` counts prose rows only).
+  const split = new Float32Array(hi + 2), cross = new Float32Array(hi + 2), strong = new Uint16Array(hi + 2);
+  for (const { s, h } of spans) {
+    let wide = 0;
+    for (let i = 1; i < s.length; i++) if (s[i][0] - s[i - 1][1] >= Math.max(6, 0.8 * h)) wide++;
+    const prose = wide <= 1, w = prose ? 1 : 0.2;
     const minX = s[0][0], maxX = s[s.length - 1][1];
     for (let x = lo; x <= hi; x++) {
-      if (s.some(([a, b]) => a < x && b > x)) cross[x]++;
-      else if (minX < x - 20 && maxX > x + 20) split[x]++;
+      if (s.some(([a, b]) => a < x && b > x)) cross[x] += w;
+      else if (minX < x - 20 && maxX > x + 20) { split[x] += w; if (prose) strong[x]++; }
     }
   }
   let maxSplit = 0;
@@ -70,13 +76,18 @@ function gutterOfItems(items, width) {
   if (maxSplit < 6) return null;
   // the widest run of x with strong two-sided evidence and few crossing rows
   let best = null, start = -1;
-  const good = x => x <= hi && split[x] >= Math.max(6, maxSplit * 0.6) && cross[x] <= (split[x] >= 15 ? split[x] * 1.2 : split[x] * 0.4);
+  const good = x => x <= hi && strong[x] >= 4 && split[x] >= Math.max(6, maxSplit * 0.6) && cross[x] <= (split[x] >= 10 ? split[x] * 1.2 : split[x] * 0.4);
   for (let x = lo; x <= hi + 1; x++) {
     if (good(x) && start < 0) start = x;
     if (!good(x) && start >= 0) { const score = x - start; if (!best || score > best.len) best = { start, len: score }; start = -1; }
   }
   if (!best || best.len < 3) return null;
-  return best.start + best.len / 2;
+  // centre on the cleanest part of the run (a few rows may poke into its edge, e.g. reference labels)
+  let minCross = Infinity;
+  for (let x = best.start; x < best.start + best.len; x++) minCross = Math.min(minCross, cross[x]);
+  const clean = [];
+  for (let x = best.start; x < best.start + best.len; x++) if (cross[x] <= minCross + 0.5) clean.push(x);
+  return clean.length >= 3 ? (clean[0] + clean[clean.length - 1]) / 2 : best.start + best.len / 2;
 }
 function segmentsOf(items, gutter = null) {
   const sorted = [...items].sort((a, b) => a.base - b.base || a.x0 - b.x0);

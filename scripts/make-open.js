@@ -19,6 +19,10 @@ const HERE = path.join(__dirname, '..');
 const copy = (rel) => { const from = path.join(root, rel), to = path.join(HERE, rel); fs.mkdirSync(path.dirname(to), { recursive: true }); fs.cpSync(from, to, { recursive: true }); };
 for (const f of ['util', 'store', 'mail', 'lint', 'evidence', 'exporter', 'zip', 'texdiff', 'assist', 'exposure']) copy(`lib/${f}.js`);
 for (const f of ['public/assets', 'public/vendor', 'public/app.html', 'public/404.html']) if (fs.existsSync(path.join(root, f))) copy(f);
+// the hosted site names Rykhet as copyright holder (no personal names on rykhet.com); this edition names the author
+const HOLDER = [['Copyright (c) 2026 Rykhet (info@rykhet.com).', 'Copyright (c) 2026 Abdullah Aman Khan.']];
+const named = rel => { const f = path.join(HERE, rel); if (fs.statSync(f).isDirectory()) { for (const e of fs.readdirSync(f)) if (!(rel === 'public' && e === 'vendor')) named(`${rel}/${e}`); return; } if (!/\.(js|mjs|css|html)$/.test(rel)) return; let t = fs.readFileSync(f, 'utf8'); const o = t; for (const [a, b] of HOLDER) t = t.split(a).join(b); if (t !== o) fs.writeFileSync(f, t); };
+for (const f of ['lib', 'public/assets', 'public/app.html', 'public/404.html']) if (fs.existsSync(path.join(HERE, f))) named(f);
 // branding of the web app
 const patchFile = (rel, pairs) => { const f = path.join(HERE, rel); let t = fs.readFileSync(f, 'utf8'); for (const [a, b] of pairs) t = t.split(a).join(b); fs.writeFileSync(f, t); };
 patchFile('public/app.html', [['<title>Research Studio · Rykhet</title>', '<title>Research Studio</title>']]);
@@ -121,6 +125,7 @@ repRe(/^const DEV = env\.DEV_LOGIN === '1' &&/m, "const DEV = (env.DEV_MODE === 
 rep("server.listen(PORT, '127.0.0.1', () => console.log(`[studio] listening on 127.0.0.1:${PORT}${DEV ? ' (DEV sign-in, mail to var/outbox)' : ''}`))",
   "server.listen(PORT, env.HOST || '127.0.0.1', () => console.log(`[studio] Research Studio on ${BASE} (listening on ${env.HOST || '127.0.0.1'}:${PORT})${DEV ? ' — development mode, emails go to var/outbox' : ''}`))");
 
+for (const [a, b] of HOLDER) s = s.split(a).join(b);
 if (/rykhet-auth|createAi|createRefCheck|RYKHET_CLIENT/.test(s)) throw new Error('hosted-only code left over');
 fs.writeFileSync(path.join(__dirname, '..', 'server.js'), s);
 console.log('server.js written (open edition)');
