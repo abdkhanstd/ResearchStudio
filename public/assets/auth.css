@@ -1,0 +1,15 @@
+/*! Research Studio — Copyright (c) 2026 Abdullah Aman Khan. All rights reserved.
+ *  Source available under the Research Studio Personal Use License (see LICENSE): personal, non-commercial use only.
+ *  Copying, redistribution, modification and use in other projects are not permitted. */
+/* sign-in page (open edition) */
+.auth-wrap{min-height:calc(100vh - 140px);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 16px}
+.auth-card{width:100%;max-width:420px;background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:28px 28px 22px;box-shadow:var(--shadow)}
+.auth-card h1{font:500 28px/1.2 var(--serif);margin:18px 0 6px}
+.auth-tabs{display:flex;gap:4px;background:var(--paper);border-radius:12px;padding:4px}
+.auth-tabs button{flex:1;border:0;background:none;padding:9px 10px;border-radius:9px;font:600 13.5px var(--sans);color:var(--muted);cursor:pointer}
+.auth-tabs button.on{background:var(--surface);color:var(--ink);box-shadow:var(--shadow)}
+.auth-card .field span{display:block;font-size:13px;font-weight:600;margin-bottom:6px;color:var(--ink-2)}
+.auth-card .input{width:100%}
+.auth-submit{width:100%;justify-content:center;margin-top:6px}
+.auth-foot{margin-top:18px;text-align:center}
+[hidden]{display:none!important}

@@ -1,0 +1,30 @@
+{
+  "name": "research-studio",
+  "version": "1.0.0",
+  "description": "Proofread research papers together: paragraph-by-paragraph reading, reading checks, numbers checked against tables and figures, history with undo, LaTeX write-back and diff exports. Self-hosted, no dependencies. Source available for personal, non-commercial use only.",
+  "main": "server.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node scripts/dev.js"
+  },
+  "homepage": "https://studio.rykhet.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/abdkhanstd/ResearchStudio.git"
+  },
+  "keywords": [
+    "proofreading",
+    "manuscript",
+    "research",
+    "latex",
+    "latexdiff",
+    "collaboration",
+    "peer review"
+  ],
+  "author": "Abdullah Aman Khan",
+  "license": "SEE LICENSE IN LICENSE",
+  "private": true
+}

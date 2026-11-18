@@ -1,0 +1,114 @@
+Research Studio Personal Use License
+Version 1.0, 18 November 2026
+
+Copyright (c) 2026 Abdullah Aman Khan. All rights reserved.
+
+This is a source-available license. It is not an open-source license. The source code is published so that people
+can read it and use the software for their own personal work; everything not expressly permitted below is reserved
+to the copyright holder.
+
+1. Definitions
+
+"Software" means everything in this repository and every earlier or later version of it published by the copyright
+holder: the source code, compiled code, documentation, user interface, texts, designs, graphics, data formats,
+algorithms and their implementation, and the structure, sequence and organisation of the code. Components listed in
+THIRD_PARTY_NOTICES.md are excluded (see section 7).
+
+"You" means the individual person who accepts this license. A company, university, research institute, government
+body or any other organisation cannot accept this license and receives no rights under it.
+
+"Personal use" means use by you, as a private individual, for your own non-commercial purposes, such as proofreading
+your own manuscripts with your co-authors, studying the code, or evaluating the Software.
+
+"Commercial use" means any use that is intended for, or directed toward, commercial advantage or monetary compensation,
+directly or indirectly, including use in or for a business, paid consulting, paid editing or proofreading services,
+offering the Software or its functions as a hosted or managed service, and any use by or on behalf of an organisation.
+
+2. What you may do
+
+Subject to all the conditions of this license, the copyright holder grants you a personal, non-exclusive,
+non-transferable, non-sublicensable, revocable license to:
+
+  (a) view and read the source code;
+  (b) download, install and run copies of the Software on computers you own or control, for your personal use only;
+  (c) let the people you collaborate with on your own non-commercial work (for example your co-authors) use the copy
+      you run, free of charge, as long as it is not offered to the public or as a service;
+  (d) change configuration settings (such as the .env file) as needed to run the Software.
+
+3. What you may not do
+
+Except as expressly permitted in section 2, you may not, and may not allow or help anyone else to:
+
+  (a) copy, reproduce or mirror the Software, in whole or in part, beyond the copies needed for your personal use and
+      their backups;
+  (b) distribute, publish, share, upload, sell, rent, lend, lease, sublicense or otherwise make the Software or any
+      part of it available to anyone, in any form, including in modified form, other than as GitHub's Terms of
+      Service require for viewing and forking this repository on GitHub (a fork on GitHub gives no further rights);
+  (c) modify, translate, adapt or create derivative works of the Software, or port it to another language or platform,
+      except configuration changes under section 2(d);
+  (d) incorporate the Software, any part of its code, or code derived from it into any other software, product,
+      service, website or project, whether open source, free or commercial;
+  (e) use the Software, its source code, its designs or the knowledge gained from studying them to create, assist in
+      creating, or improve any software, product or service that copies, imitates or competes with the Software or its
+      functions;
+  (f) use the Software for any commercial use, or by or for any organisation, without a separate written license from
+      the copyright holder;
+  (g) offer the Software, or any of its functions, to third parties as a hosted, managed, online or software-as-a-
+      service offering;
+  (h) use the Software or its source code, in whole or in part, to train, fine-tune, evaluate or prompt any machine
+      learning or artificial intelligence system, or include it in any dataset;
+  (i) remove, alter or obscure any copyright, license, authorship or attribution notice in the Software, or present
+      the Software or any part of it as your own work;
+  (j) use the names "Research Studio", "Rykhet", their logos or the author's name to endorse or promote anything,
+      or in a way that suggests a connection with the author.
+
+4. Ideas, designs and methods
+
+The copyright holder created the concept, design, workflow and methods embodied in the Software (including
+paragraph-by-paragraph collaborative proofreading with reading checks, verification of a manuscript's numbers
+against its own tables and figures, figures read back into data, LaTeX write-back with change markup, and the
+round trip between the proofreading workspace and a LaTeX editor). This license grants no right in any of them
+beyond running the Software under section 2. No license is granted, by implication, estoppel or otherwise, to any
+patent, trade secret, trademark, design right or other intellectual property of the copyright holder.
+
+5. Notices
+
+Every copy you make under this license must keep this LICENSE file and every copyright notice in the Software.
+
+6. Termination
+
+This license terminates automatically and immediately if you break any of its terms. On termination you must stop
+using the Software and delete all copies in your possession or control. The copyright holder may also revoke this
+license for future use by publishing a new license version or by written notice. Sections 3 to 9 survive
+termination.
+
+7. Third-party components
+
+The Software includes components made by others (listed in THIRD_PARTY_NOTICES.md, mainly in public/vendor/). Those
+components are licensed to you under their own licenses, and nothing in this license limits the rights those licenses
+give you in those components. This license covers everything else in the Software.
+
+8. No warranty
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+
+9. Limitation of liability
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR
+OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE, INCLUDING LOSS OF DATA.
+
+10. Other permissions
+
+Any use not permitted here — commercial use, use by an organisation, redistribution, or use in another project —
+needs a separate written license from the copyright holder. To ask, open an issue at
+https://github.com/abdkhanstd/ResearchStudio.
+
+11. Acceptance
+
+By downloading, copying, installing or using the Software, you agree to this license. If you do not agree, you may
+only view the source code on GitHub.
+
+If any part of this license is found unenforceable, the rest remains in effect, and the unenforceable part is
+replaced by the closest enforceable term.

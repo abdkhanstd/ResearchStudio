@@ -1,0 +1,38 @@
+<!doctype html>
+<!-- Research Studio — Copyright (c) 2026 Abdullah Aman Khan. All rights reserved. Research Studio Personal Use License: personal, non-commercial use only; copying and redistribution are not permitted. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Sign in · Research Studio</title>
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#101828">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/site.css">
+<link rel="stylesheet" href="/assets/landing.css">
+<link rel="stylesheet" href="/assets/auth.css">
+<script src="/assets/theme.js"></script>
+</head>
+<body class="auth-page">
+<header class="topbar"><div class="wrap">
+  <a class="logo" href="/"><span class="logo-mark"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 4v16M17 4v16M19 4H9.5a4.5 4.5 0 0 0 0 9H13"/></svg></span><span>Research Studio</span></a>
+</div></header>
+<main class="auth-wrap">
+  <div class="auth-card">
+    <div class="auth-tabs" role="tablist"><button type="button" data-mode="signin" class="on">Sign in</button><button type="button" data-mode="signup">Create account</button></div>
+    <h1 id="auth-title">Welcome back</h1>
+    <p id="auth-note" class="muted small"></p>
+    <form id="auth-form" novalidate>
+      <label class="field" data-for="signup"><span>Your name</span><input class="input" name="name" autocomplete="name" maxlength="80"></label>
+      <label class="field" data-for="signin signup"><span>Email</span><input class="input" name="email" type="email" autocomplete="email" required></label>
+      <label class="field" data-for="password"><span>Current password</span><input class="input" name="current" type="password" autocomplete="current-password"></label>
+      <label class="field" data-for="signin signup password"><span id="pw-label">Password</span><input class="input" name="password" type="password" autocomplete="current-password" minlength="8" required></label>
+      <div id="auth-error" class="err-banner" hidden></div>
+      <button class="btn btn-primary btn-lg auth-submit" type="submit" id="auth-submit">Sign in</button>
+    </form>
+  </div>
+  <p class="small muted auth-foot">© 2026 Abdullah Aman Khan · <a href="/license">Licence: personal use only</a> · <a href="https://studio.rykhet.com" rel="noopener">hosted demo</a></p>
+</main>
+<script src="/assets/login.js"></script>
+</body>
+</html>

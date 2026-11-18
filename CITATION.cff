@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you refer to Research Studio, please cite it as below."
+title: "Research Studio: a workspace for proofreading research papers together"
+type: software
+authors:
+  - family-names: "Khan"
+    given-names: "Abdullah Aman"
+repository-code: "https://github.com/abdkhanstd/ResearchStudio"
+url: "https://studio.rykhet.com"
+license-url: "https://github.com/abdkhanstd/ResearchStudio/blob/main/LICENSE"
+date-released: "2026-11-18"
+version: "1.0.0"
+keywords:
+  - manuscript proofreading
+  - collaborative proofreading
+  - research integrity
+  - LaTeX
+abstract: >-
+  Research Studio is a workspace for the final read of a research manuscript by its co-authors:
+  paragraph-by-paragraph proofreading with reading checks, verification of the manuscript's numbers against its
+  own tables and figures, figures read back into data, history with undo, and LaTeX write-back with change markup.
+  Source available for personal, non-commercial use only.

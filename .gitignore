@@ -1,0 +1,12 @@
+# data and secrets
+var/
+.env
+*.pem
+
+# editors and systems
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+node_modules/
+*.log

@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /$
+Allow: /license
+Disallow: /app
+Disallow: /api
+Disallow: /login

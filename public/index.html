@@ -1,0 +1,87 @@
+<!doctype html>
+<!-- Research Studio — Copyright (c) 2026 Abdullah Aman Khan. All rights reserved. Research Studio Personal Use License: personal, non-commercial use only; copying and redistribution are not permitted. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Research Studio — proofread your paper together</title>
+<meta name="description" content="Research Studio is a first-of-its-kind workspace for proofreading research papers together: paragraph-by-paragraph reading, reading checks, numbers checked against your own tables and figures, history with undo, LaTeX write-back and diff exports.">
+<meta name="theme-color" content="#101828">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<meta property="og:title" content="Research Studio">
+<meta property="og:description" content="Proofread your paper together — paragraph by paragraph.">
+<link rel="stylesheet" href="/assets/site.css">
+<link rel="stylesheet" href="/assets/landing.css">
+<script src="/assets/theme.js"></script>
+</head>
+<body>
+<header class="topbar"><div class="wrap">
+  <a class="logo" href="/"><span class="logo-mark"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 4v16M17 4v16M19 4H9.5a4.5 4.5 0 0 0 0 9H13"/></svg></span><span>Research Studio</span></a>
+  <nav class="nav l-nav"><a href="#how">How it works</a><a href="#features">Features</a><a href="https://studio.rykhet.com" rel="noopener">Hosted demo</a></nav>
+  <div class="top-right"><a class="btn btn-ghost" href="/sso/login">Sign in</a><a class="btn btn-primary" href="/sso/login?next=/app/new">Start proofreading</a></div>
+</div></header>
+
+<section class="hero"><div class="wrap hero-grid">
+  <div>
+    <div class="eyebrow">Research Studio <span class="first-badge">First of its kind</span></div>
+    <h1>Proofread your paper <em>together</em> — one paragraph at a time.</h1>
+    <p class="lead">Upload the finished manuscript, invite your co-authors, and let everyone read it properly: suggestions with live diffs, short reading checks that keep attention honest, and an evidence graph that checks the numbers in the text against your own tables and figures.</p>
+    <div class="row-wrap"><a class="btn btn-primary btn-lg" href="/sso/login?next=/app/new">Upload a manuscript</a><a class="btn btn-ghost btn-lg" href="https://studio.rykhet.com" rel="noopener">Try the hosted demo</a></div>
+    <p class="small muted hero-note">PDF or LaTeX (folder, .zip or .tex) · self-hosted · private, invitation-only</p>
+  </div>
+  <div class="mock" aria-hidden="true">
+    <div class="mock-top"><span></span><span></span><span></span><b>Proof Room</b><i class="mock-bar"><i></i></i><em>23 / 86</em></div>
+    <div class="mock-body">
+      <div class="mock-meta">¶ 23 · 4.2 Results · page 6</div>
+      <p class="mock-text">Our method reaches <span class="m-del">83.2%</span><span class="m-ins">83.5%</span> accuracy on CIFAR-10, <span class="m-hl">2.1 points</span> above the strongest baseline (Table&nbsp;2), while using <span class="m-del">less</span><span class="m-ins">fewer</span> parameters.</p>
+      <div class="mock-cards">
+        <div class="mc sug"><b>Ana · Grammar</b><span>“less” → “fewer” (countable)</span><em>Accept</em></div>
+        <div class="mc ev"><b>Evidence · Table 2</b><span>Text says 83.2%, row <i>Ours</i> shows 83.5%</span><em>Apply fix</em></div>
+      </div>
+      <div class="mock-q"><b>Reading check</b><span>Fill in the blank: “Our method reaches ____ accuracy on CIFAR-10”</span><div><i>81.2%</i><i class="ok">83.5%</i><i>85.9%</i><i>79.4%</i></div></div>
+    </div>
+  </div>
+</div></section>
+
+<section class="first"><div class="wrap first-grid">
+  <div class="first-mark" aria-hidden="true">1<sup>st</sup></div>
+  <div><h2>A first-of-its-kind studio for the last read of a paper</h2>
+  <p>Writing tools help you write; review systems help editors judge. Nothing was built for the moment in between, when co-authors give a finished manuscript its final read. Research Studio brings together paragraph-by-paragraph reading, attention checks, verification of every number against the paper's own tables and figures (figures included, read back into data), full history with undo, and write-back into your LaTeX source with a latexdiff-style diff.</p></div>
+</div></section>
+
+<section id="how" class="sect-l"><div class="wrap">
+  <div class="sect-head"><div class="eyebrow">How it works</div><h2>From finished draft to fixed manuscript</h2></div>
+  <ol class="how">
+    <li><span>1</span><h3>Upload</h3><p>Drop a PDF or your LaTeX project. It is split — in your browser — into paragraphs, sections, equations, tables, figures and references.</p></li>
+    <li><span>2</span><h3>Invite</h3><p>Invite co-authors by email as proofreaders or editors. An invitation lets exactly that address create an account and join.</p></li>
+    <li><span>3</span><h3>Read & suggest</h3><p>Readers see each paragraph as typeset, suggest edits with live diffs, comment, mark text and answer the occasional reading check.</p></li>
+    <li><span>4</span><h3>Fix & export</h3><p>Accept, merge or reject — every change is versioned and can be undone. Write changes into your .tex files, export a diff, the revised project, an annotated PDF or a review report.</p></li>
+  </ol>
+</div></section>
+
+<section id="features" class="sect-l alt"><div class="wrap">
+  <div class="sect-head"><div class="eyebrow">In this edition</div><h2>Everything runs on your server — no AI service needed</h2></div>
+  <div class="feat-grid">
+    <div class="feat"><div class="f-i f1">∑</div><h3>Evidence graph</h3><p>Numbers in the text are matched to the table row and column they come from, or to the plotted data, and flagged when they differ. The same quantity reported differently in two places is flagged too.</p></div>
+    <div class="feat"><div class="f-i f2">◩</div><h3>Figures as data</h3><p>Charts are read back into numbers from the vector drawing (multi-panel figures panel by panel, box plots included), from pgfplots source, by OCR, or with a click-to-digitise tool.</p></div>
+    <div class="feat"><div class="f-i f6">?</div><h3>Reading checks</h3><p>Short fill-in-the-blank questions built from the paragraph itself. Owners see pass rates and implausibly fast reading per reader.</p></div>
+    <div class="feat"><div class="f-i f4">⚑</div><h3>Consistency checks</h3><p>Unresolved references, undefined or twice-defined acronyms, missing figures and tables, mixed spellings, duplicated sentences, placeholder text.</p></div>
+    <div class="feat"><div class="f-i f3">⇄</div><h3>LaTeX write-back</h3><p>Accepted changes go into your .tex files at their exact positions, into a local folder or a revised .zip. Bring an edited version back and every edit is merged into the history.</p></div>
+    <div class="feat"><div class="f-i f5">✓</div><h3>Private by design</h3><p>Built-in accounts, invitation-only projects, AES-256-GCM encryption at rest, watermarked page images for readers, and an audit trail for owners.</p></div>
+  </div>
+  <p class="small muted" style="margin-top:22px">AI proofreading, reference checking with RefCheck and the round trip with Rykhet LaTeX run on the hosted demo at <a href="https://studio.rykhet.com" rel="noopener">studio.rykhet.com</a>.</p>
+</div></section>
+
+<section id="open" class="sect-l"><div class="wrap os-grid">
+  <div><div class="eyebrow">Licence</div><h2>Source available, rights reserved</h2><p class="muted">You may run this for your own personal, non-commercial work. Copying, redistribution, modification, use in other projects, commercial use and use by organisations are not permitted. © 2026 Abdullah Aman Khan, all rights reserved.</p>
+  <div class="row-wrap"><a class="btn btn-primary" href="https://github.com/abdkhanstd/ResearchStudio" rel="noopener">Source code on GitHub</a><a class="btn btn-ghost" href="/license">Read the licence</a></div></div>
+  <pre class="os-code" aria-label="Run it for personal use">git clone https://github.com/abdkhanstd/ResearchStudio
+cd ResearchStudio
+cp .env.example .env    # set SESSION_SECRET, DATA_KEY
+node server.js          # personal use only — see LICENSE</pre>
+</div></section>
+
+<footer class="foot"><div class="wrap"><span>© 2026 Abdullah Aman Khan · Research Studio · <a href="/license">Licence</a></span><span><a href="https://github.com/abdkhanstd/ResearchStudio" rel="noopener">Source code on GitHub</a> · <a href="https://studio.rykhet.com" rel="noopener">Hosted demo</a></span></div></footer>
+<script src="/assets/landing.js"></script>
+</body>
+</html>
