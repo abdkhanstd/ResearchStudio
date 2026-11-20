@@ -17,7 +17,7 @@ const root = process.argv[2];
 if (!root || !fs.existsSync(path.join(root, 'server.js'))) { console.error('usage: node scripts/make-open.js <hosted repository folder>'); process.exit(1); }
 const HERE = path.join(__dirname, '..');
 const copy = (rel) => { const from = path.join(root, rel), to = path.join(HERE, rel); fs.mkdirSync(path.dirname(to), { recursive: true }); fs.cpSync(from, to, { recursive: true }); };
-for (const f of ['util', 'store', 'mail', 'lint', 'evidence', 'zip', 'assist', 'exposure']) copy(`lib/${f}.js`);
+for (const f of ['util', 'store', 'mail', 'lint', 'evidence', 'zip', 'assist', 'exposure', 'bibcheck']) copy(`lib/${f}.js`);
 // the export and diff code moved to public/assets/shared (made in the browser): drop the old server copies
 for (const f of ['lib/exporter.js', 'lib/texdiff.js']) fs.rmSync(path.join(HERE, f), { force: true });
 for (const f of ['public/assets', 'public/vendor', 'public/app.html', 'public/404.html']) if (fs.existsSync(path.join(root, f))) copy(f);
@@ -40,6 +40,10 @@ patchFile('public/assets/app.js', [['<span>Research Studio <small>Rykhet</small>
 const unbrand = [['RYKHET RESEARCH STUDIO', 'RESEARCH STUDIO'], [' by Rykhet Research Studio (studio.rykhet.com)', ' by Research Studio'], ["setCreator('studio.rykhet.com')", "setCreator('Research Studio')"], ['Rykhet Research Studio', 'Research Studio']];
 patchFile('public/assets/report.js', unbrand);
 patchFile('public/assets/shared/exporter.mjs', unbrand);
+// the .bib reference check: a self-hosted server identifies itself as such to Crossref, OpenAlex and arXiv
+const patchSure = (rel, pairs) => { const f = path.join(HERE, rel); let t = fs.readFileSync(f, 'utf8'); for (const [a, b] of pairs) { if (!t.includes(a)) throw new Error(`${rel}: not found: ${a.slice(0, 80)}`); t = t.split(a).join(b); } fs.writeFileSync(f, t); };
+patchSure('lib/bibcheck.js', [["const UA = 'RykhetResearchStudio/1.0 (https://studio.rykhet.com; reference check)';", "const UA = 'ResearchStudio/1.0 (self-hosted; reference check)';"]]);
+patchSure('public/assets/checks.js', [[' The same check as Rykhet LaTeX.</p>', '</p>'], ['compiled PDFs, your connected folder and Rykhet LaTeX.</p>', 'compiled PDFs and your connected folder.</p>']]);
 
 let s = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
 const rep = (a, b) => { if (!s.includes(a)) throw new Error(`not found: ${a.slice(0, 80)}`); s = s.replace(a, b); };

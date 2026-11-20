@@ -66,6 +66,7 @@ export async function forkToFolder(p, onProgress = () => {}) {
   // the copy already holds every current paragraph
   const synced = {};
   for (const b of p.blocks || []) if (b.src) synced[b.id] = b.cur ?? b.text;
+  for (const f of (p.bib && p.bib.fixes) || []) synced[`bib:${f.file}#${f.key}`] = { file: f.file, key: f.key, text: f.text, orig: f.orig };
   await kv.set(`synced:${p.id}`, synced);
   await kv.set(`dir:${p.id}`, dir);
   await kv.set(`dirKind:${p.id}`, 'fork');
@@ -117,9 +118,56 @@ export async function syncToFolder(p, handle) {
       files.push(file);
     }
   }
+  const bib = await syncBibFixes(p, handle, synced, conflicts, files);
   await kv.set(`synced:${p.id}`, synced);
   await kv.set(`syncedAt:${p.id}`, new Date().toISOString());
-  return { written, files, conflicts, pending: todo.length };
+  return { written, entries: bib, files, conflicts, pending: todo.length };
+}
+/** What the folder should hold for each corrected .bib entry (and for one whose correction was undone: the original). */
+function bibWanted(p, synced) {
+  const want = new Map();
+  for (const f of (p.bib && p.bib.fixes) || []) want.set(`${f.file}#${f.key}`, { file: f.file, key: f.key, text: f.text, orig: f.orig });
+  for (const [k, v] of Object.entries(synced)) if (k.startsWith('bib:') && v && !want.has(k.slice(4)) && v.text !== v.orig) want.set(k.slice(4), { file: v.file, key: v.key, text: v.orig, orig: v.orig });
+  return want;
+}
+/**
+ * Corrected .bib entries (reference check), found by their key: written where the folder still holds what we wrote
+ * last (or the uploaded entry); an entry you also changed in the file is left to you.
+ */
+async function syncBibFixes(p, handle, synced, conflicts, files) {
+  const { parseBibEntries, entryRemoval } = await import('./shared/bib.mjs');
+  const byFile = new Map();
+  for (const [k, w] of bibWanted(p, synced)) {
+    const held = synced[`bib:${k}`] ? synced[`bib:${k}`].text : w.orig;
+    if (held !== w.text) (byFile.get(w.file) || byFile.set(w.file, []).get(w.file)).push({ k, w, held });
+  }
+  let n = 0;
+  for (const [file, list] of byFile) {
+    let fh;
+    try { fh = await fileAt(handle, file); } catch { for (const x of list) conflicts.push({ bib: x.w.key, file, why: 'file missing in the folder' }); continue; }
+    const raw = await (await fh.getFile()).text();
+    const crlf = raw.includes('\r\n');
+    let t = crlf ? raw.replace(/\r\n/g, '\n') : raw;
+    const entries = parseBibEntries(t);
+    const edits = [];
+    for (const x of list) {
+      const e = entries.find(z => z.key === x.w.key);
+      const now = e ? t.slice(e.from, e.to) : null;
+      const record = () => { synced[`bib:${x.k}`] = { file: x.w.file, key: x.w.key, text: x.w.text, orig: x.w.orig }; };
+      if (now === x.w.text || (now === null && x.w.text === '')) { record(); continue; } // already there
+      if (now === null) { conflicts.push({ bib: x.w.key, file, why: 'the entry is not in the file' }); continue; }
+      if (now !== x.held) { conflicts.push({ bib: x.w.key, file, why: 'the entry was changed in the file as well' }); continue; }
+      edits.push(x.w.text === '' ? { ...entryRemoval(t, e), insert: '' } : { from: e.from, to: e.to, insert: x.w.text });
+      record(); n++;
+    }
+    if (!edits.length) continue;
+    for (const d of edits.sort((a, b) => b.from - a.from)) t = t.slice(0, d.from) + d.insert + t.slice(d.to);
+    const w = await fh.createWritable();
+    await w.write(crlf ? t.replace(/\n/g, '\r\n') : t);
+    await w.close();
+    if (!files.includes(file)) files.push(file);
+  }
+  return n;
 }
 
 /** Re-pair the paragraphs with a newly compiled PDF and upload its page images. */
@@ -226,7 +274,7 @@ export function Source({ p, arg }) {
   useEffect(() => { import('./exports.js').then(m => m.revisedSources(p)).then(setRev, toastError); }, [p.rev]);
   useEffect(() => {
     if (!rev) return;
-    const files = Object.keys(rev.files).map(f => ({ path: f, size: rev.files[f].length, changed: p.blocks.filter(b => b.src && b.src.file === f && b.cur !== b.text).length, blocks: p.blocks.filter(b => b.src && b.src.file === f).length }));
+    const files = Object.keys(rev.files).map(f => ({ path: f, size: rev.files[f].length, changed: /\.bib$/i.test(f) ? rev.regions(f).length : p.blocks.filter(b => b.src && b.src.file === f && b.cur !== b.text).length, blocks: p.blocks.filter(b => b.src && b.src.file === f).length }));
     setList({ main: rev.main, files, skipped: rev.skipped });
     setCur(c => c || rev.main || (files[0] && files[0].path));
   }, [rev]);
@@ -236,7 +284,7 @@ export function Source({ p, arg }) {
   // auto-write while this tab is open
   useEffect(() => {
     if (!auto || !folder || folder.state !== 'granted') return;
-    const pending = p.blocks.some(b => b.src && b.cur !== b.text);
+    const pending = p.blocks.some(b => b.src && b.cur !== b.text) || !!(p.bib && p.bib.fixes && p.bib.fixes.length);
     if (!pending) return;
     const t = setTimeout(() => write(true), 1200);
     return () => clearTimeout(t);
@@ -244,7 +292,7 @@ export function Source({ p, arg }) {
   /** The first write into the original folder is confirmed (a fork needs no confirmation). */
   const okToWrite = async () => {
     if (kind === 'fork' || (await kv.get(`writeOk:${p.id}`))) return true;
-    const ok = await confirmDialog({ title: `Write into “${folder.handle.name}”?`, body: `This edits the .tex files in your folder directly (only the changed paragraphs; anything you changed elsewhere in the files is kept). To keep your original files untouched, cancel and choose “Fork to a new folder” instead.`, ok: 'Write into my files' });
+    const ok = await confirmDialog({ title: `Write into “${folder.handle.name}”?`, body: `This edits the .tex and .bib files in your folder directly (only the changed paragraphs and corrected reference entries; anything you changed elsewhere in the files is kept). To keep your original files untouched, cancel and choose “Fork to a new folder” instead.`, ok: 'Write into my files' });
     if (ok) await kv.set(`writeOk:${p.id}`, true);
     return ok;
   };
@@ -255,7 +303,8 @@ export function Source({ p, arg }) {
     try {
       const r = await syncToFolder(p, folder.handle);
       setReport(r); setLast(new Date().toISOString()); setFolder(await folderOf(p.id));
-      if (!quiet || r.written || r.conflicts.length) toast(r.written ? `${plural(r.written, 'paragraph')} written to ${r.files.join(', ')}` : r.conflicts.length ? `${r.conflicts.length} paragraph(s) could not be placed` : 'Your folder is up to date', r.conflicts.length ? 'bad' : 'ok', 6000);
+      const what = [r.written ? plural(r.written, 'paragraph') : '', r.entries ? plural(r.entries, 'reference entry', 'reference entries') : ''].filter(Boolean).join(' and ');
+      if (!quiet || what || r.conflicts.length) toast(what ? `${what} written to ${r.files.join(', ')}` : r.conflicts.length ? `${r.conflicts.length} change(s) could not be placed` : 'Your folder is up to date', r.conflicts.length ? 'bad' : 'ok', 6000);
     } catch (e) { toastError(e); }
     setBusy(null);
   };
@@ -348,8 +397,10 @@ export function Source({ p, arg }) {
     let pos = 0;
     for (const r of regs) {
       if (r.start > pos) parts.push(html`<span>${t.slice(pos, r.start)}</span>`);
-      const b = p.blockById.get(r.bid);
-      parts.push(html`<span class=${`src-reg ${r.changed ? 'changed' : ''}`} title=${b ? blockLabel(p, b) : ''} onClick=${() => r.changed && navigate(`/app/p/${p.id}/manuscript/${r.bid}`)}>${t.slice(r.start, r.end)}</span>`);
+      const b = r.bid && p.blockById.get(r.bid);
+      parts.push(r.bib
+        ? html`<span class="src-reg changed" title=${`${r.key}: corrected in the reference check`} onClick=${() => navigate(`/app/p/${p.id}/checks?f=refs&bib=${encodeURIComponent(r.key)}`)}>${t.slice(r.start, r.end)}</span>`
+        : html`<span class=${`src-reg ${r.changed ? 'changed' : ''}`} title=${b ? blockLabel(p, b) : ''} onClick=${() => r.changed && navigate(`/app/p/${p.id}/manuscript/${r.bid}`)}>${t.slice(r.start, r.end)}</span>`);
       pos = r.end;
     }
     parts.push(html`<span>${t.slice(pos)}</span>`);
@@ -374,7 +425,7 @@ export function Source({ p, arg }) {
             <label class="row small" style="margin-top:10px"><label class="switch"><input type="checkbox" checked=${auto} onChange=${e => setAutoOn(e.target.checked)} /><span></span></label> Write automatically while this tab is open</label>
             ${busy && busy.startsWith('pdf:') ? html`<p class="tiny faint">${busy.slice(4)}</p>` : null}`}
         ${busy && busy.startsWith('fork:') ? html`<p class="tiny faint">${busy.slice(5)}</p>` : null}
-        ${report && report.conflicts.length ? html`<div class="warn-box small"><b>${report.conflicts.length} paragraph(s) need a manual edit</b> — they were also changed in your file:<ul>${report.conflicts.slice(0, 8).map(c => { const b = p.blockById.get(c.bid); return html`<li><a href=${`/app/p/${p.id}/manuscript/${c.bid}`}>${b ? blockLabel(p, b) : c.bid}</a> (${c.file})</li>`; })}</ul></div>` : null}
+        ${report && report.conflicts.length ? html`<div class="warn-box small"><b>${report.conflicts.length} change(s) need a manual edit</b> — they were also changed in your file:<ul>${report.conflicts.slice(0, 8).map(c => { if (c.bib) return html`<li><a href=${`/app/p/${p.id}/checks?f=refs&bib=${encodeURIComponent(c.bib)}`}>Reference entry ${c.bib}</a> (${c.file}: ${c.why})</li>`; const b = p.blockById.get(c.bid); return html`<li><a href=${`/app/p/${p.id}/manuscript/${c.bid}`}>${b ? blockLabel(p, b) : c.bid}</a> (${c.file})</li>`; })}</ul></div>` : null}
       </div>
       <div class="card pad">
         <h3 class="card-h">${Icon('external')} ${p.latexEnabled ? 'Round trip with Rykhet LaTeX' : 'Bring in an edited version'}</h3>
@@ -408,7 +459,7 @@ export function Source({ p, arg }) {
     </div>
     <div class="card src-view">
       <div class="src-files">${!list ? html`<${Spinner} small />` : list.files.map(f => html`<button class=${`src-file ${cur === f.path ? 'on' : ''}`} onClick=${() => setCur(f.path)}><span class="mono">${f.path}</span>${f.changed ? html`<em>${f.changed}</em>` : null}</button>`)}</div>
-      <div class="src-body" ref=${viewRef}>${!file ? html`<div class="pad"><${Spinner} small /></div>` : html`<div class="src-head"><b class="mono">${file.path}</b><span class="faint tiny">${(file.regions || []).filter(r => r.changed).length} changed · green = changed paragraph (click to review)</span></div><pre class="src-pre">${rendered}</pre>`}</div>
+      <div class="src-body" ref=${viewRef}>${!file ? html`<div class="pad"><${Spinner} small /></div>` : html`<div class="src-head"><b class="mono">${file.path}</b><span class="faint tiny">${/\.bib$/i.test(file.path) ? `${(file.regions || []).length} corrected · green = entry corrected in the reference check (click to see it)` : `${(file.regions || []).filter(r => r.changed).length} changed · green = changed paragraph (click to review)`}</span></div><pre class="src-pre">${rendered}</pre>`}</div>
     </div>
   </div>`;
 }

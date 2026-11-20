@@ -13,6 +13,7 @@
 import { api, tk } from './lib.js';
 import * as EX from './shared/exporter.mjs';
 import * as TD from './shared/texdiff.mjs';
+import { fixRegions } from './shared/bib.mjs';
 
 const TEXT = /\.(tex|bib|bbl|sty|cls|bst|cfg|def|clo|txt|csv|dat|md)$/i;
 const SKIP = /(^|\/)(__MACOSX|\.git)\//;
@@ -30,7 +31,7 @@ const logged = (p, kind) => api(`/api/projects/${p.id}/exported`, { method: 'POS
 // the stored sources change only when a new version is brought in
 const cache = new Map();
 export function sourcesOf(p) {
-  const key = `${p.id}:${(p.imported && p.imported.at) || ''}:${p.source.original || ''}`;
+  const key = `${p.id}:${(p.imported && p.imported.at) || ''}:${p.source.original || ''}:${p.source.layoutVer || 0}`;
   if (!cache.has(key)) {
     for (const k of cache.keys()) if (k.startsWith(`${p.id}:`)) cache.delete(k);
     cache.set(key, api(`/api/projects/${p.id}/source-files`).catch(e => { cache.delete(key); throw e; }));
@@ -44,7 +45,9 @@ export async function revisedSources(p) {
   const src = await sourcesOf(p);
   const full = withSources(p, src);
   const r = EX.revisedTex(full);
-  return { main: full.source.main, files: r.files, skipped: r.skipped, original: full.source.texFiles, regions: file => EX.regions(full, file) };
+  const fixes = (p.bib && p.bib.fixes) || [];
+  // .bib files hold no paragraphs: their regions are the corrected entries
+  return { main: full.source.main, files: r.files, skipped: r.skipped, original: full.source.texFiles, regions: file => (/\.bib$/i.test(file) ? fixRegions(r.files[file] || '', fixes.filter(f => f.file === file)) : EX.regions(full, file)) };
 }
 
 async function originalEntries(p, src, onStage) {

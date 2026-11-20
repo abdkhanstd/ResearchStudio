@@ -9,6 +9,8 @@
  * half; only plain words get \sout / \uwave, everything else is coloured or, for structure (labels, \item, &), left as is.
  */
 
+import { applyBibFixes } from './bib.mjs';
+
 const ACCENT = /^[`'^"~=.uvHtcdbrk]$/;
 const DROP_DELETED = new Set(['label', 'begin', 'end', 'item', 'section', 'subsection', 'subsubsection', 'paragraph', 'chapter', 'par', 'newline', 'linebreak', 'pagebreak', 'newpage', 'clearpage', 'hline', 'toprule', 'midrule', 'bottomrule', 'centering', 'noindent', 'vspace', 'hspace', 'caption', 'includegraphics', 'bibliography', 'bibliographystyle', 'input', 'include', 'maketitle', 'appendix']);
 
@@ -190,6 +192,8 @@ function diffProject(p) {
     });
     files[file] = t;
   }
+  // corrections of .bib entries from the reference check: applied as they are (a bibliography is not marked up)
+  if (p.bib && p.bib.fixes && p.bib.fixes.length) Object.assign(files, applyBibFixes(files, p.bib.fixes).files);
   const main = p.source && p.source.main;
   if (main && typeof files[main] === 'string') {
     const t = files[main];

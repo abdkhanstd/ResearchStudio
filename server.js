@@ -22,6 +22,7 @@ const { createStore } = require('./lib/store');
 const { createMailer } = require('./lib/mail');
 const { createAssist } = require('./lib/assist');
 const { createAccounts } = require('./lib/accounts');
+const createBibCheck = require('./lib/bibcheck');
 const { lint } = require('./lib/lint');
 const { runEvidence } = require('./lib/evidence');
 let EX = null; // revised LaTeX and change lists (shared ES module: exports are made in the browser, see exports.js)
@@ -44,6 +45,8 @@ fs.mkdirSync(VAR, { recursive: true });
 const cipher = U.createCipher(env.DATA_KEY || `dev-only:${SECRET}`);
 if (!env.DATA_KEY && !DEV) { console.error('[studio] DATA_KEY is required in .env'); process.exit(1); }
 const store = createStore({ dir: VAR, cipher, maxCached: Number(env.MAX_CACHED || 8) });
+// .bib entries checked against Crossref / OpenAlex / arXiv — the same check as Rykhet LaTeX (lib/bibcheck.js)
+const bibcheck = createBibCheck({ cacheFile: path.join(VAR, 'bibcheck-cache.bin'), seal: cipher.sealJson, open: cipher.openJson, env });
 const mailer = createMailer({ host: env.SMTP_HOST, port: env.SMTP_PORT, mode: env.MAIL_MODE || (DEV ? 'file' : 'smtp'), base: BASE, outbox: path.join(VAR, 'outbox'), fromAddr: env.MAIL_FROM_ADDR || `no-reply@${new URL(BASE).hostname}`, fromName: env.MAIL_FROM_NAME || 'Research Studio', brand: env.BRAND || 'Research Studio', accountName: 'Research Studio account' });
 const ai = createAssist(); // rule-based reading checks and evidence checks (no AI service)
 const CHECKS = () => (ai.checks ?? ai.enabled);
@@ -61,8 +64,9 @@ async function rrCall(pathQ, body, timeout = 300000) {
 const refcheck = { enabled: false, link: () => null, start: async () => { throw new Error('Reference checking runs on the hosted service.'); }, status: async () => { throw new Error('not available'); } };
 const accounts = createAccounts({ dir: VAR });
 let tk = null; // shared text toolkit (ES module)
+let BIB = null; // .bib reading and corrections (shared ES module)
 const shared = name => import(path.join(PUB, 'assets', 'shared', name).replace(/\\/g, '/').replace(/^([A-Za-z]):/, 'file:///$1:'));
-const tkReady = Promise.all([shared('textkit.mjs'), shared('exporter.mjs')]).then(([m, x]) => { tk = m; EX = x; });
+const tkReady = Promise.all([shared('textkit.mjs'), shared('exporter.mjs'), shared('bib.mjs')]).then(([m, x, b]) => { tk = m; EX = x; BIB = b; });
 
 // ── Sessions (signed cookies, revocable on sign-out) ──
 const SESSION = 'studio-session', IDT = 'studio-idt', DAYS = 14;
@@ -181,7 +185,15 @@ function cleanDoc(b) {
   }
   const tables = (Array.isArray(b.tables) ? b.tables : []).slice(0, 300).map((t, i) => ({ id: ID.test(t.id) ? t.id : `t${i}`, label: U.strT(t.label, 40) || `Table ${i + 1}`, num: U.strT(t.num, 12), caption: U.strT(t.caption, 2000), bid: ID.test(t.bid) ? t.bid : null, page: t.page ? U.int(t.page, 1, 5000, null) : null, box: cleanBox(t.box), grid: cleanGrid(t.grid), source: ['latex', 'pdf', 'ai', 'manual'].includes(t.source) ? t.source : 'pdf', rows: Array.isArray(t.rows) ? cleanGrid(t.rows) : undefined }));
   const figures = (Array.isArray(b.figures) ? b.figures : []).slice(0, 400).map((f, i) => ({ id: ID.test(f.id) ? f.id : `f${i}`, label: U.strT(f.label, 40) || `Fig. ${i + 1}`, num: U.strT(f.num, 12), caption: U.strT(f.caption, 3000), bid: ID.test(f.bid) ? f.bid : null, page: f.page ? U.int(f.page, 1, 5000, null) : null, box: cleanBox(f.box), image: f.image && store.validName(f.image) ? f.image : null, kind: ['vector', 'raster', 'mixed', 'tikz', 'none'].includes(f.kind) ? f.kind : 'none', data: cleanData(f.data), text: Array.isArray(f.text) ? f.text.slice(0, 400).map(t => U.strT(t, 120)) : [], ocr: U.strT(f.ocr, 8000), file: U.strT(f.file, 300) || null, words: cleanWords(f.words), wordsSize: Array.isArray(f.wordsSize) ? [U.int(f.wordsSize[0], 1, 20000, 1), U.int(f.wordsSize[1], 1, 20000, 1)] : undefined }));
-  const refs = (Array.isArray(b.refs) ? b.refs : []).slice(0, 1000).map((r, i) => ({ i, raw: U.strT(r.raw, 3000), key: U.strT(r.key, 120) || null, parsed: r.parsed && typeof r.parsed === 'object' ? JSON.parse(JSON.stringify(r.parsed).slice(0, 6000)) : null })).filter(r => r.raw.length > 8);
+  // a parsed reference is kept up to 6000 characters (long author lists lose their full names first; cutting the JSON
+  // itself would make it unreadable)
+  const parsedRef = x => {
+    if (!x || typeof x !== 'object') return null;
+    let j = JSON.stringify(x);
+    if (j.length > 6000) j = JSON.stringify({ ...x, names: undefined, authors: Array.isArray(x.authors) ? x.authors.slice(0, 30) : undefined, etal: true });
+    return j.length > 6000 ? null : JSON.parse(j);
+  };
+  const refs = (Array.isArray(b.refs) ? b.refs : []).slice(0, 1000).map((r, i) => ({ i, raw: U.strT(r.raw, 3000), key: U.strT(r.key, 120) || null, parsed: parsedRef(r.parsed) })).filter(r => r.raw.length > 8);
   const s = b.source || {};
   let texFiles = null;
   if (s.texFiles && typeof s.texFiles === 'object') {
@@ -257,7 +269,7 @@ function projectView(p, s) {
     members: members.map(m => memberSummary(p, m, full)),
     invites: owner ? (p.invites || []).map(i => ({ id: i.id, email: i.email, role: i.role, status: i.status === 'pending' && Date.parse(i.expires) < Date.now() ? 'expired' : i.status, created: i.created, expires: i.expires, mail: i.mail, mailDetail: i.mailDetail, acceptedAt: i.acceptedAt })) : undefined,
     sections: p.sections, blocks: p.blocks, tables: p.tables, figures: p.figures, refs: p.refs, citations: p.citations,
-    refcheck: p.refcheck ? { ...p.refcheck, link: p.refcheck.id ? refcheck.link(p.refcheck.id) : null } : null, refcheckEnabled: refcheck.enabled,
+    refcheck: p.refcheck ? { ...p.refcheck, link: p.refcheck.id ? refcheck.link(p.refcheck.id) : null } : null, refcheckEnabled: refcheck.enabled, bib: bibView(p),
     suggestions: (p.suggestions || []).filter(x => sugVisible(p, x, s.sub, role)).map(sugView),
     changes: p.changes || [], milestones: p.milestones || [], progress: prog,
     ai: { enabled: ai.enabled, checks: CHECKS(), readers: !!p.settings.ai.readers, review: reviews, job: p.ai && p.ai.job || null, quizReady: Object.keys(p.quiz || {}).length },
@@ -651,6 +663,71 @@ function pollRefCheck(pid) {
   setTimeout(tick, 3000);
 }
 
+// ── Reference check of the .bib entries (the same check as Rykhet LaTeX) ──
+// p.bib = { results: { "<file>#<key>": { fp, r, at } }, fixes: [{ id, file, key, orig, text, by, byName, at }],
+//           ignore: [entry ids], skipDoi, job: { status, done, total, at, by } }
+const BIB_MAX = 600;
+const bibRuns = new Map(); // pid → { again, force }
+const bibOf = p => (p.bib = p.bib || { results: {}, fixes: [], ignore: [], skipDoi: false, job: null });
+const bibNow = p => (BIB && p.source && p.source.kind === 'latex' && p.source.texFiles ? BIB.bibState(p.source.texFiles, (p.bib && p.bib.fixes) || []) : null);
+function bibView(p) {
+  if (!p.source || p.source.kind !== 'latex') return null;
+  const b = p.bib || {};
+  return { results: b.results || {}, fixes: b.fixes || [], ignore: b.ignore || [], skipDoi: !!b.skipDoi, job: b.job || null };
+}
+/**
+ * Check every cited entry whose current text has no result yet (force: all of them again), one after another in the
+ * background; results reach open pages as 'bib' events. A run asked for while one is going runs again after it.
+ */
+function runBibCheck(p, s, { force = false } = {}) {
+  const st = bibNow(p);
+  if (!st || !st.entries.length) return null;
+  const going = bibRuns.get(p.id);
+  if (going) { going.again = true; going.force = going.force || force; return bibOf(p).job; }
+  const run = { again: false, force };
+  bibRuns.set(p.id, run);
+  store.pin(p.id);
+  const B = bibOf(p);
+  const by = s ? meName(s) : 'Studio';
+  B.job = { status: 'running', done: 0, total: 0, at: U.now(), by };
+  (async () => {
+    try {
+      for (;;) {
+        const now = bibNow(p);
+        const skip = new Set(B.ignore || []);
+        const todo = now.entries.filter(e => e.cited && e.checkable && !e.dup && !skip.has(e.id) && (run.force || !(B.results[e.id] && B.results[e.id].fp === e.fp))).slice(0, BIB_MAX);
+        run.force = false;
+        B.job = { status: 'running', done: 0, total: todo.length, at: U.now(), by };
+        emit(p, { t: 'bib', job: B.job, results: {} });
+        let fresh = {}, last = Date.now();
+        const flush = () => { if (Object.keys(fresh).length) { emit(p, { t: 'bib', job: B.job, results: fresh }); fresh = {}; } store.touch(p, { index: false, delay: 3000 }); last = Date.now(); };
+        for (const [i, e] of todo.entries()) {
+          if (!store.index.projects[p.id]) return; // deleted meanwhile
+          const r = await bibcheck.check(BIB.payloadOf(e));
+          B.results[e.id] = fresh[e.id] = { fp: e.fp, r, at: U.now() };
+          B.job.done = i + 1;
+          if (Date.now() - last > 1500) flush();
+        }
+        flush();
+        if (!run.again) break;
+        run.again = false;
+      }
+      // results of entries that are gone (removed, renamed, a new version) are dropped
+      const ids = new Set(bibNow(p).entries.map(e => e.id));
+      for (const id of Object.keys(B.results)) if (!ids.has(id)) delete B.results[id];
+      B.job = { ...B.job, status: 'done', finished: U.now() };
+    } catch (e) {
+      console.error('[studio] bibcheck', p.id, e);
+      B.job = { ...(B.job || {}), status: 'error', error: 'The reference check stopped. Run it again.', finished: U.now() };
+    } finally {
+      bibRuns.delete(p.id);
+      store.unpin(p.id);
+      if (store.index.projects[p.id]) { store.touch(p, { index: false }); emit(p, { t: 'bib', job: B.job, results: {}, full: true }); }
+    }
+  })();
+  return B.job;
+}
+
 // ── HTTP helpers ───────────────────────────────────────────
 function cookie(req, name) {
   for (const part of String(req.headers.cookie || '').split(';')) { const i = part.indexOf('='); if (i > 0 && part.slice(0, i).trim() === name) { try { return decodeURIComponent(part.slice(i + 1).trim()); } catch { return null; } } }
@@ -795,6 +872,8 @@ async function api(req, res, p_, s, url) {
     if (h && h.owner.sub === s.sub && p.source.kind === 'latex') { await linkEditor(p, h); handoffs.delete(b.handoff); if (p.latexShare) act(p, s, 'latex-share', { detail: 'from Rykhet LaTeX' }); }
     await store.create(p);
     touchUser(s);
+    // the .bib entries are checked at once, in the background
+    if (p.source.kind === 'latex') runBibCheck(p, s);
     logActivity({ kind: 'project', sub: s.sub, id: p.id, blocks: doc.blocks.length, source: doc.source.kind });
     return json(res, 201, { id: p.id });
   }
@@ -1325,6 +1404,75 @@ async function projectApi(req, res, p, s, role, rest, url) {
       return json(res, 202, p.refcheck);
     }
   }
+  // ── .bib reference check: run, corrections (owner and editors), ignored entries, DOI setting ──
+  if (rest === 'bib/check' && M === 'POST') {
+    const b0 = await readBody(req, 2000);
+    // anyone on the project may have unchecked entries checked; checking everything again is for the owner and editors
+    if (b0.force) need('editor');
+    if (p.source.kind !== 'latex') throw fail(400, 'Only LaTeX projects have .bib files to check.');
+    if (b0.force) { if (!isAdmin(s) && used(`bib:${p.id}`) >= 20) throw fail(429, 'The references of this manuscript were checked again 20 times today. Try again tomorrow.'); count(`bib:${p.id}`); }
+    const job = runBibCheck(p, s, { force: !!b0.force });
+    if (!job) throw fail(400, 'No .bib entries were found in this project.');
+    if (b0.force) act(p, s, 'bibcheck', { detail: 'all references checked again' });
+    return json(res, 202, { job });
+  }
+  if (rest === 'bib/fix' && M === 'POST') {
+    need('editor');
+    const b0 = await readBody(req, 60000);
+    const st = bibNow(p);
+    const e = st && st.entries.find(x => x.file === b0.file && x.key === b0.key);
+    if (!e) throw fail(404, 'This entry is no longer in the project.');
+    if (typeof b0.base === 'string' && b0.base !== e.text) throw fail(409, 'This entry was changed meanwhile. Look at it again.');
+    const text = typeof b0.text === 'string' ? b0.text.replace(/\r\n?/g, '\n').trim() : null;
+    if (text === null || text.length > 20000) throw fail(400, 'No corrected entry.');
+    if (text) {
+      const got = BIB.parseBibEntries(text);
+      if (got.length !== 1 || got[0].key !== e.key || got[0].from !== 0 || got[0].to !== text.length) throw fail(400, 'The corrected entry could not be read as one BibTeX entry with the same key.');
+    }
+    const B = bibOf(p);
+    const origE = BIB.parseBibEntries(p.source.texFiles[e.file] || '').find(x => x.key === e.key);
+    const orig = origE ? (p.source.texFiles[e.file] || '').slice(origE.from, origE.to) : null;
+    if (orig === null) throw fail(409, 'This entry is not in the uploaded file.');
+    let fx = B.fixes.find(f => f.file === e.file && f.key === e.key);
+    if (text === orig) B.fixes = B.fixes.filter(f => f !== fx);
+    else if (fx) Object.assign(fx, { orig, text, by: s.sub, byName: meName(s), at: U.now(), note: U.strT(b0.note, 300) });
+    else B.fixes.push(fx = { id: U.shortId(), file: e.file, key: e.key, orig, text, by: s.sub, byName: meName(s), at: U.now(), note: U.strT(b0.note, 300) });
+    act(p, s, 'bib-fix', { detail: `${e.key}: ${text ? U.strT(b0.note, 120) || 'corrected' : 'removed'} (${e.file})` });
+    save({ index: false });
+    emit(p, { t: 'bib', fixes: B.fixes, results: {} });
+    runBibCheck(p, s);
+    return json(res, 200, { ok: true, fixes: B.fixes });
+  }
+  let bfx = rest.match(/^bib\/fix\/([a-f0-9]{12})$/);
+  if (bfx && M === 'DELETE') {
+    need('editor');
+    const B = bibOf(p);
+    const fx = B.fixes.find(f => f.id === bfx[1]);
+    if (!fx) throw fail(404, 'This correction was already undone.');
+    B.fixes = B.fixes.filter(f => f !== fx);
+    act(p, s, 'bib-fix', { detail: `${fx.key}: correction undone (${fx.file})` });
+    save({ index: false });
+    emit(p, { t: 'bib', fixes: B.fixes, results: {} });
+    runBibCheck(p, s);
+    return json(res, 200, { ok: true, fixes: B.fixes });
+  }
+  if (rest === 'bib' && M === 'PATCH') {
+    need('editor');
+    const b0 = await readBody(req, 4000);
+    const B = bibOf(p);
+    if (typeof b0.skipDoi === 'boolean') B.skipDoi = b0.skipDoi;
+    if (typeof b0.id === 'string' && typeof b0.ignore === 'boolean') {
+      const id = U.strT(b0.id, 500);
+      B.ignore = (B.ignore || []).filter(x => x !== id);
+      if (b0.ignore) B.ignore.push(id);
+      if (B.ignore.length > 2000) B.ignore.splice(0, B.ignore.length - 2000);
+    }
+    save({ index: false });
+    emit(p, { t: 'bib', ignore: B.ignore, skipDoi: B.skipDoi, results: {} });
+    // an entry brought back is checked if it has no result
+    if (b0.ignore === false) runBibCheck(p, s);
+    return json(res, 200, { ok: true, ignore: B.ignore, skipDoi: B.skipDoi });
+  }
   let fx = rest.match(/^(figures|tables)\/([a-zA-Z0-9_-]{1,24})$/);
   if (fx && (M === 'PUT' || M === 'PATCH')) {
     need('editor');
@@ -1507,6 +1655,8 @@ async function projectApi(req, res, p, s, role, rest, url) {
       p.imported = { at: U.now(), by: meName(s), via, ...stats };
       act(p, s, 'import', { detail: `${via}: ${stats.changed} changed, ${stats.added} added, ${stats.removed} removed` });
       save(); emit(p, { t: 'layout' });
+      // entries the new version changed or added are checked (corrections already in it count as done)
+      if (p.source.kind === 'latex') runBibCheck(p, s);
       return json(res, 200, { ok: true, ...stats });
     }
     const busy = (p.suggestions || []).length || (p.changes || []).length;
@@ -1516,9 +1666,12 @@ async function projectApi(req, res, p, s, role, rest, url) {
     Object.assign(p, { sections: doc.sections, blocks: doc.blocks, tables: doc.tables, figures: doc.figures, refs: doc.refs, latex: doc.latex, citations: doc.citations });
     p.source = { ...doc.source, uploaded: p.source.uploaded, original: p.source.original, layoutVer: (p.source.layoutVer || 0) + 1 };
     Object.assign(p, { suggestions: [], versions: {}, changes: [], progress: {}, quiz: {}, quizLog: [], pending: {}, ai: { review: {}, dismissed: {}, job: null }, evidence: null, refcheck: null, milestones: [] });
+    // corrections and ignored entries stay; results of entries that changed are checked again
+    if (p.bib) p.bib.job = null;
     p.lint = { at: U.now(), issues: lint(p, tk), dismissed: {} };
     act(p, s, 'reread', { detail: `${doc.blocks.length} blocks` });
     save(); emit(p, { t: 'layout' });
+    if (p.source.kind === 'latex') runBibCheck(p, s);
     return json(res, 200, { ok: true, blocks: doc.blocks.length });
   }
   // ── the version sent back from Rykhet LaTeX ("Send to Studio" in the editor) ──
@@ -1762,7 +1915,7 @@ server.keepAliveTimeout = 65_000;
 tkReady.then(() => server.listen(PORT, env.HOST || '127.0.0.1', () => console.log(`[studio] Research Studio on ${BASE} (listening on ${env.HOST || '127.0.0.1'}:${PORT})${DEV ? ' — development mode, emails go to var/outbox' : ''}`)));
 
 // resume reference polling after a restart
-tkReady.then(async () => { for (const id of Object.keys(store.index.projects)) { const p = await store.load(id); if (p && p.refcheck && ['queued', 'running'].includes(p.refcheck.status)) pollRefCheck(id); if (p && p.ai && p.ai.job && p.ai.job.status === 'running') { p.ai.job.status = 'error'; p.ai.job.error = 'The server restarted during the check. Run it again.'; store.touch(p, { index: false }); } } });
+tkReady.then(async () => { for (const id of Object.keys(store.index.projects)) { const p = await store.load(id); if (p && p.refcheck && ['queued', 'running'].includes(p.refcheck.status)) pollRefCheck(id); if (p && p.ai && p.ai.job && p.ai.job.status === 'running') { p.ai.job.status = 'error'; p.ai.job.error = 'The server restarted during the check. Run it again.'; store.touch(p, { index: false }); } if (p && p.bib && p.bib.job && p.bib.job.status === 'running') runBibCheck(p, null); } });
 
 async function shutdown() {
   console.log('[studio] shutting down');

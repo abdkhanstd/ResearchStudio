@@ -17,8 +17,8 @@ tables and figures, full history with undo, and changes written straight back in
 > See [LICENSE](LICENSE). For any other use, ask for a written license by opening an issue.
 
 This repository is the self-hosted edition: one Node.js process, no npm dependencies, no database, and no AI service
-needed. The hosted demo runs the same code with AI proofreading, reference checking (RefCheck) and a round trip with
-the Rykhet LaTeX editor switched on.
+needed. The hosted demo runs the same code with AI proofreading, RefCheck (reference checking for PDFs, retractions
+and web sources) and a round trip with the Rykhet LaTeX editor switched on.
 
 ---
 
@@ -41,6 +41,11 @@ the Rykhet LaTeX editor switched on.
   tool — and replotted so you can compare.
 - **Consistency checks**: unresolved references, acronyms defined twice or used before definition, missing figures
   and tables, mixed US/UK spelling and hyphenation, duplicated sentences, placeholders.
+- **Reference check** (LaTeX with `.bib`): every cited entry is looked up in Crossref, then OpenAlex and arXiv, and
+  compared with its published record — fabricated entries, DOIs of another paper, title typos, authors name by name
+  (missing, extra or different initials), year, venue, volume, pages and entry type. Editors fix an entry in one click
+  from a side-by-side comparison; corrections go into the revised project (exports, diff, your folder), never into the
+  uploaded original, and can be undone.
 - **History with undo**: every change is versioned with who made it and why; milestones; three-way merges when a
   paragraph changed under a suggestion.
 - **Back to your source**: accepted changes are written into your `.tex` files at their exact positions — into a
@@ -59,7 +64,7 @@ the Rykhet LaTeX editor switched on.
 | Reading checks | Fill-in-the-blank, made from the text | Written by an AI |
 | Evidence graph | Rule-based matching to tables and figure data | AI-assisted claim finding and judging |
 | AI proofreading, rewrites, questions | — | Yes |
-| Reference checking | — | RefCheck |
+| Reference checking | `.bib` entries against Crossref, OpenAlex and arXiv | The same, plus RefCheck (PDFs, retractions, the web) |
 | Diff PDF | Diff project (.zip) to compile with your TeX | Compiled on your computer via Rykhet LaTeX |
 | Round trip with an online LaTeX editor | Import an edited version | Rykhet LaTeX, both ways |
 
@@ -106,6 +111,10 @@ All settings live in `.env` (see [.env.example](.env.example)).
 | `MAIL_FROM_ADDR`, `MAIL_FROM_NAME` | Sender of invitations and reminders. Sign with DKIM at the relay for good delivery. |
 | `MAIL_MODE=file` | Write emails to `var/outbox` instead of sending them. |
 | `MAX_PROJECTS`, `MAX_UPLOAD_MB`, `INVITES_DAILY`, `PRECHECK_DAILY` | Limits per user and per manuscript. |
+| `OPENALEX_API_KEYS` | Optional, comma-separated OpenAlex keys for the reference check (used in turn; it works without). |
+
+The reference check sends each cited entry's title, authors, year and DOI to Crossref, OpenAlex and arXiv (public
+scholarly services) and caches the answers, encrypted, in `var/`. Nothing else of the manuscript leaves the server.
 
 ## Running in production
 
@@ -136,15 +145,17 @@ folder and your `.env` together.
 - **Server** (`server.js`, `lib/`): a single dependency-free Node.js process. Projects are JSON documents encrypted with
   AES-256-GCM in `var/projects/`, with an LRU cache in memory; live updates go to readers over server-sent events.
   `lib/accounts.js` keeps scrypt password hashes, `lib/assist.js` makes the reading checks and the evidence checks,
-  `lib/texdiff.js` writes latexdiff-style change markup, `lib/exporter.js` the other exports.
+  `lib/bibcheck.js` checks `.bib` entries against their published records (in the background, results streamed to
+  everyone on the project).
 - **Browser** (`public/assets/`, Preact + htm, no build step): reading PDFs (PDF.js) with column and table layout
   analysis, LaTeX parsing with exact source positions, pairing LaTeX paragraphs with the compiled PDF, the figure
   digitizer (vector drawings, OCR with Tesseract.js, pgfplots), page images, the annotated PDF and the review report
-  (pdf-lib), and writing changes into a local folder (File System Access API). Heavy work stays on the reader's machine.
+  (pdf-lib), the exports and the latexdiff-style change markup (`public/assets/shared/`), and writing changes into a
+  local folder (File System Access API). Heavy work stays on the reader's machine.
 
 ```
 server.js             HTTP server, API, sessions, jobs
-lib/                  accounts, assist (rule-based checks), store, mail, lint, evidence, exporter, texdiff, zip
+lib/                  accounts, assist (rule-based checks), bibcheck (reference check), store, mail, lint, evidence, zip
 public/               landing page, sign-in, the app and its libraries (public/vendor)
 examples/             a small LaTeX paper with deliberate mistakes
 scripts/dev.js        development mode

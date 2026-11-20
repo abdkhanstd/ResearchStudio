@@ -250,6 +250,16 @@ export class ProjectStore {
       case 'table': { const i = p.tables.findIndex(f => f.id === ev.id); if (i >= 0) { p.tables[i] = ev.table; p.tabById.set(ev.id, ev.table); } break; }
       case 'settings': p.settings = ev.settings; p.title = ev.title; this.index(); break;
       case 'progress': this.refetch(2500); return;
+      case 'bib': { // reference check of the .bib entries: results arrive as they are found
+        const b = p.bib || { results: {}, fixes: [], ignore: [], skipDoi: false, job: null };
+        p.bib = { ...b, results: { ...b.results, ...(ev.results || {}) } };
+        if (ev.job !== undefined) p.bib.job = ev.job;
+        if (ev.fixes) p.bib.fixes = ev.fixes;
+        if (ev.ignore) p.bib.ignore = ev.ignore;
+        if (typeof ev.skipDoi === 'boolean') p.bib.skipDoi = ev.skipDoi;
+        if (ev.full) this.refetch(400);
+        break;
+      }
       case 'revoked': toast('Your access to this manuscript was removed by the owner.', 'bad', 9000); this.close(); navigate('/app'); return;
       case 'deleted': toast('This manuscript was deleted by its owner.', 'bad', 9000); this.close(); navigate('/app'); return;
       default: this.refetch(400); return; // members, lint, review, evidence, refcheck, milestones

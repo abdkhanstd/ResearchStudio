@@ -7,6 +7,7 @@ import { IssueCard, blockLabel, Chart, DataTable, TableGrid, FigureImage, applyI
 import { ClaimRow } from './manuscript.js';
 import { PrecheckButton } from './project.js';
 import { AuthorsExposure } from './rexp.js';
+import * as BIB from './shared/bib.mjs';
 
 // ── Checks ─────────────────────────────────────────────────
 export function Checks({ p }) {
@@ -48,7 +49,15 @@ export function Checks({ p }) {
 }
 
 const VERDICT = { verified: ['c-ok', 'Verified'], warning: ['c-warn', 'Minor issues'], problem: ['c-bad', 'Problem'], notfound: ['c-bad', 'Not found'], retracted: ['c-bad', 'Retracted'], web: ['c-info', 'Found online'], error: ['', 'Error'] };
+/** LaTeX projects with a .bib: every cited entry checked against its published record (the check of Rykhet LaTeX);
+ *  RefCheck stays available below as a second opinion (retractions, the web). PDFs: RefCheck. */
 function References({ p }) {
+  const bib = useBibState(p);
+  if (p.source.kind === 'latex' && !bib.st && !bib.err) return html`<div class="card pad"><${Spinner} small /> Reading the .bib files…</div>`;
+  if (bib.st && bib.st.entries.length) return html`<div class="col"><${BibReferences} p=${p} st=${bib.st} />${p.refcheckEnabled && p.refs.length ? html`<details class="card pad bibc-more"><summary><b>RefCheck</b> <span class="muted small">— a second opinion: retractions (Retraction Watch), Semantic Scholar and the web</span>${p.refcheck && p.refcheck.summary ? html` <span class="chip c-brand">checked</span>` : null}</summary><${RefCheckPanel} p=${p} /></details>` : null}</div>`;
+  return html`<${RefCheckPanel} p=${p} />`;
+}
+function RefCheckPanel({ p }) {
   const [busy, setBusy] = useState(false);
   const rc = p.refcheck;
   const start = async () => { setBusy(true); try { await api(`/api/projects/${p.id}/refcheck`, { method: 'POST', body: {} }); toast('Reference check started', 'ok'); } catch (e) { toastError(e); } setBusy(false); };
@@ -66,6 +75,199 @@ function References({ p }) {
     ${rc && rc.error ? html`<p class="bad-text small">${rc.error}</p>` : null}
     </div>
     <div class="card pad"><ol class="ref-list">${(refs || p.refs.map(r => ({ i: r.i, raw: r.raw }))).map(r => { const [c, l] = VERDICT[r.verdict] || ['', r.status === 'pending' || r.status === 'checking' ? 'checking…' : '']; return html`<li><div class="row-wrap">${l ? html`<span class=${`chip ${c}`}>${l}</span>` : null}<span class="faint tiny">[${r.i + 1}]</span></div><div class="small">${r.raw}</div>${(r.issues || []).filter(i => i.sev !== 'info').map(i => html`<div class="issue-why small">• ${i.msg}</div>`)}${r.ai && r.ai.note ? html`<div class="issue-why small">${Icon('sparkle')} ${r.ai.note}</div>` : null}</li>`; })}</ol></div>
+  </div>`;
+}
+
+// ── .bib reference check (the same check as Rykhet LaTeX) ──
+/** The project's .bib entries as checked: the stored sources with the corrections applied. */
+export function useBibState(p) {
+  const [src, setSrc] = useState(null);
+  const [err, setErr] = useState(null);
+  useEffect(() => { if (p.source.kind !== 'latex') return; import('./exports.js').then(m => m.sourcesOf(p)).then(setSrc, setErr); }, [p.id, p.imported && p.imported.at, p.source.layoutVer]);
+  const fixes = (p.bib && p.bib.fixes) || [];
+  const st = useMemo(() => (src ? BIB.bibState(src.texFiles || {}, fixes) : null), [src, fixes]);
+  return { st, err };
+}
+const NO_BIB = { results: {}, fixes: [], ignore: [], skipDoi: false, job: null };
+/** An entry's state: s = ok | warn | err | unknown | pending | uncited | ignored | skipped | dup, r = the result as shown. */
+export function bibStatus(B, ignore, e) {
+  if (!e.cited) return { s: 'uncited' };
+  if (ignore.has(e.id)) return { s: 'ignored' };
+  if (e.dup) return { s: 'dup' };
+  if (!e.checkable) return { s: 'skipped' };
+  const x = B.results[e.id];
+  if (!x || x.fp !== e.fp) return { s: 'pending' };
+  const r = BIB.shown(x.r, B.skipDoi);
+  return { s: r.status, r };
+}
+/** Counts for the overview and the report. */
+export function bibSummary(p, st) {
+  const B = p.bib || NO_BIB;
+  const ignore = new Set(B.ignore || []);
+  const c = { ok: 0, warn: 0, err: 0, unknown: 0, pending: 0, uncited: 0, ignored: 0, skipped: 0, dup: 0 };
+  for (const e of st.entries) c[bibStatus(B, ignore, e).s]++;
+  return c;
+}
+const untex = s => String(s || '').replace(/\\[`'^"~=.]\s*\{?([A-Za-z])\}?/g, '$1').replace(/\\[uvHtcdbrk](?:\s+|\{)([A-Za-z])\}?/g, '$1').replace(/\\((?:La|Bib)?TeX)\b/g, '$1').replace(/\\[a-zA-Z]+\s*\{([^{}]*)\}/g, '$1').replace(/\\[a-zA-Z]+\s*/g, ' ').replace(/\\([&%#_$])/g, '$1').replace(/[{}]/g, '').replace(/~/g, ' ').replace(/\s+/g, ' ').trim();
+const authorsShort = a => { const l = String(a || '').split(/\s+and\s+/i).map(x => untex(x)).filter(x => x && !/^others$/i.test(x)).map(x => (x.includes(',') ? x.split(',')[0] : x.split(' ').pop()).trim()); return l.length > 3 || /\band\s+others\b/i.test(a || '') ? `${l.slice(0, 3).join(', ')} et al.` : l.join(', '); };
+const PILL = { ok: ['c-ok', '✓'], warn: ['c-warn', '⚠'], err: ['c-bad', '✗'], unknown: ['c-info', '?'], uncited: ['', 'not cited'], ignored: ['', 'ignored'], skipped: ['', 'not checked'], dup: ['c-warn', 'duplicate key'] };
+const FILTERS = [['problems', 'Problems'], ['ok', '✓ Match'], ['warn', '⚠ Differ'], ['err', '✗ Not found'], ['unknown', '? Unsure'], ['uncited', 'Not cited'], ['skipped', 'Not checked'], ['ignored', 'Ignored'], ['all', 'All']];
+const inFilter = (f, s) => (f === 'all' ? true : f === 'problems' ? ['warn', 'err', 'unknown', 'dup'].includes(s) : f === 'skipped' ? s === 'skipped' || s === 'dup' : s === f);
+
+function BibReferences({ p, st }) {
+  const { query } = useRoute();
+  const B = p.bib || NO_BIB;
+  const ignore = useMemo(() => new Set(B.ignore || []), [B.ignore]);
+  const rows = st.entries.map(e => ({ e, ...bibStatus(B, ignore, e) }));
+  const n = k => rows.filter(x => inFilter(k, x.s)).length;
+  const running = !!(B.job && B.job.status === 'running');
+  const pending = rows.filter(x => x.s === 'pending').length;
+  const [f, setF] = useState(() => (query.get('bib') ? 'all' : 'problems'));
+  const [busy, setBusy] = useState(false);
+  // entries never checked (a project from before this check, or entries just changed) are checked when the tab opens
+  const asked = useRef(false);
+  useEffect(() => { if (!asked.current && !running && pending) { asked.current = true; api(`/api/projects/${p.id}/bib/check`, { method: 'POST', body: {} }).catch(() => {}); } }, [pending, running]);
+  // ?bib=<key>: that entry, with its details
+  useEffect(() => {
+    const k = query.get('bib');
+    const x = k && rows.find(y => y.e.key === k);
+    if (!x) return;
+    setTimeout(() => { const el = document.getElementById(`bib-${x.e.id}`); if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, 60);
+    if (x.r) openBib(p, x.e, x.r);
+  }, [query.get('bib')]);
+  const recheck = async () => { setBusy(true); try { await api(`/api/projects/${p.id}/bib/check`, { method: 'POST', body: { force: true } }); toast('Every cited entry is being checked again', 'ok'); } catch (e) { toastError(e); } setBusy(false); };
+  const setSkipDoi = async v => { try { await api(`/api/projects/${p.id}/bib`, { method: 'PATCH', body: { skipDoi: v } }); } catch (e) { toastError(e); } };
+  const shownRows = rows.filter(x => inFilter(f, x.s));
+  const fixes = B.fixes || [];
+  return html`<div class="col">
+    <div class="card pad">
+      <div class="row-wrap">
+        <div class="grow"><h3 class="card-h">${Icon('book')} Reference check</h3>
+          <p class="muted small">Every cited entry of ${st.files.map((x, i) => html`${i ? ', ' : ''}<span class="mono">${x.path}</span>`)} is compared with its published record — Crossref, then OpenAlex and arXiv: is it real, and do the title, authors, year, venue, volume, pages, DOI and entry type match?</p></div>
+        ${running ? html`<span class="row small"><${Spinner} small /> checking ${B.job.done || 0} of ${B.job.total || '…'}</span>` : p.canDecide ? html`<button class="btn btn-ghost btn-sm" disabled=${busy} onClick=${recheck} title="Check every cited entry again">${busy ? html`<${Spinner} small />` : Icon('refresh')} Check again</button>` : null}
+      </div>
+      <div class="row-wrap bibc-filters">
+        ${FILTERS.filter(([k]) => k === 'problems' || k === 'all' || n(k)).map(([k, l]) => html`<button class=${`chip-btn bibc-f-${k} ${f === k ? 'on' : ''}`} onClick=${() => setF(k)}>${l} <b>${n(k)}</b></button>`)}
+        ${pending && !running ? html`<span class="faint tiny">${pending} waiting to be checked</span>` : null}
+        <span class="grow"></span>
+        ${p.canDecide ? html`<label class="row small" title="Some venues don't print DOIs: don't flag missing DOIs or add them in corrections"><label class="switch"><input type="checkbox" checked=${!B.skipDoi} onChange=${e => setSkipDoi(!e.target.checked)} /><span></span></label> Check DOIs</label>` : B.skipDoi ? html`<span class="faint tiny">DOIs not checked</span>` : null}
+      </div>
+      ${B.job && B.job.status === 'error' ? html`<p class="bad-text small">${B.job.error}</p>` : null}
+      ${st.missing.length ? html`<p class="warn-text small">${Icon('alert')} Cited but not in the .bib: ${st.missing.slice(0, 12).map((k, i) => html`${i ? ', ' : ''}<span class="mono">${k}</span>`)}${st.missing.length > 12 ? ` and ${st.missing.length - 12} more` : ''}</p>` : null}
+      ${fixes.length ? html`<p class="tiny faint">${plural(fixes.length, 'entry', 'entries')} corrected here — the corrections are in the revised project: the Source tab, downloads, compiled PDFs and your connected folder.</p>` : null}
+    </div>
+    <div class="card pad">${shownRows.length ? html`<div class="bibc-list">${shownRows.map(x => html`<${BibRow} p=${p} x=${x} key=${x.e.id} />`)}</div>`
+      : html`<p class="faint small">${f === 'problems' ? (running || pending ? 'Nothing found so far — results appear as each entry is checked.' : 'No problems: every checked entry matches its published record.') : 'No entries in this view.'}</p>`}</div>
+  </div>`;
+}
+
+function BibRow({ p, x }) {
+  const { e, s, r } = x;
+  const B = p.bib || NO_BIB;
+  const fix = (B.fixes || []).find(z => z.file === e.file && z.key === e.key);
+  const [busy, setBusy] = useState(false);
+  const pct = useMemo(() => BIB.commentedLines(e.text, { ...e, from: 0, to: e.text.length, headEnd: e.headEnd - e.from }), [e.text]);
+  const [c, l] = PILL[s] || ['', ''];
+  const label = s === 'warn' ? `⚠ ${r.diffs.length || ''}`.trim() : s === 'ok' && r.hints && r.hints.length ? '✓ ⓘ' : l;
+  const venue = untex(e.fields.journal || e.fields.booktitle || e.fields.journaltitle || e.fields.publisher || '');
+  const call = async (path, body, method = 'POST') => { setBusy(true); try { await api(`/api/projects/${p.id}/${path}`, { method, body }); } catch (err) { toastError(err); } setBusy(false); };
+  const ignore = on => call('bib', { id: e.id, ignore: on }, 'PATCH');
+  const undo = async () => { if (await confirmDialog({ title: `Undo the correction of ${e.key}?`, body: 'The entry goes back to how it was uploaded, everywhere the revised project is used.', ok: 'Undo' })) call(`bib/fix/${fix.id}`, undefined, 'DELETE'); };
+  const usePct = () => call('bib/fix', { file: e.file, key: e.key, base: e.text, text: pct.fixed, note: '% line written as an x-field' });
+  const open = () => r && openBib(p, e, r);
+  const why = s === 'uncited' ? 'No \\cite in the manuscript uses it, so it is not in the bibliography (and not checked).' : s === 'skipped' ? 'Web pages, software, theses and reports are not in Crossref: not checked.' : s === 'dup' ? 'The same key is in another .bib file; BibTeX uses the first.' : s === 'ignored' ? 'You chose not to check this entry.' : s === 'pending' ? 'Checking against the published record…' : r ? r.message : '';
+  return html`<div class=${`bibc-row s-${s}`} id=${`bib-${e.id}`}>
+    <div class="bibc-pill-col">${s === 'pending' ? html`<span class="chip"><${Spinner} small /></span>` : html`<button class=${`chip bibc-pill ${c}`} disabled=${!r} onClick=${open} title=${r ? 'Details' : why}>${label}</button>`}</div>
+    <div class="grow bibc-main">
+      <div class="bibc-title" onClick=${open}>${untex(e.fields.title) || html`<span class="faint">(no title)</span>`}</div>
+      <div class="tiny muted">${[authorsShort(e.fields.author || e.fields.editor), e.fields.year, venue].filter(Boolean).join(' · ')}</div>
+      <div class=${`small bibc-msg ${s === 'err' ? 'bad-text' : s === 'warn' ? 'warn-text' : ''}`}>${why}${s === 'warn' && r.diffs.length ? html` — <span class="muted">${r.diffs.map(d => (FIELD_LABEL[d.field] || d.field).toLowerCase()).join(', ')}</span>` : null}${s === 'ok' && r.hints && r.hints.length ? html` — <span class="muted">suggestion: ${r.hints.map(h => h.detail || h.field).join('; ')}</span>` : null}</div>
+      ${pct.lines.length ? html`<div class="small warn-text bibc-pct">${Icon('alert')} <span>A <code>%</code> line inside this entry ends it for BibTeX (“You're missing a field name”): the fields after it are lost.${pct.fixed ? ' Writing it as an x-field (xdoi = {…}) keeps it out of the bibliography without breaking the entry.' : ' Move the comment above the entry.'}</span>${pct.fixed && p.canDecide ? html` <button class="btn btn-soft btn-sm" disabled=${busy} onClick=${usePct}>Use x${(pct.lines.find(z => z.field) || {}).field}</button>` : null}</div>` : null}
+      ${fix ? html`<div class="tiny bibc-fixed">${Icon('check')} Corrected by ${fix.byName} ${ago(fix.at)}${fix.note ? ` — ${fix.note}` : ''}${p.canDecide ? html` · <button class="btn btn-text btn-sm" disabled=${busy} onClick=${undo}>Undo</button>` : null}</div>` : null}
+      <div class="row-wrap bibc-acts">
+        ${r && s !== 'pending' ? html`<button class=${`btn btn-sm ${s === 'warn' && p.canDecide && r.suggestion ? 'btn-soft' : 'btn-ghost'}`} onClick=${open}>${s === 'warn' && p.canDecide && r.suggestion ? 'Review & fix' : 'Details'}</button>` : null}
+        ${BIB.entryLinks(e).map(lk => html`<a class="btn btn-text btn-sm" href=${lk.url} target="_blank" rel="noopener noreferrer" title=${`Open ${lk.url}`}>${lk.kind} ↗</a>`)}
+        <a class="btn btn-text btn-sm" href=${BIB.scholarUrl(e)} target="_blank" rel="noopener noreferrer" title="Search Google Scholar for this title (opens in your browser)">Scholar ↗</a>
+        ${p.canDecide && s === 'ignored' ? html`<button class="btn btn-text btn-sm" disabled=${busy} onClick=${() => ignore(false)} title="Check this entry again">Check it ↺</button>` : null}
+        ${p.canDecide && ['warn', 'err', 'unknown'].includes(s) ? html`<button class="btn btn-text btn-sm" disabled=${busy} onClick=${() => ignore(true)} title="Stop checking this entry in this project; “Ignored” brings it back">Ignore</button>` : null}
+      </div>
+    </div>
+    <span class="mono tiny faint bibc-key" title=${`${e.key} (${e.file})`}>${e.key}</span>
+  </div>`;
+}
+
+const FIELD_LABEL = { title: 'Title', author: 'Authors', year: 'Year', journal: 'Journal', booktitle: 'Proceedings', volume: 'Volume', pages: 'Pages', doi: 'DOI', type: 'Entry type' };
+const ESCAPE = new Set(['title', 'journal', 'booktitle', 'publisher', 'author']);
+const texEscape = (k, v) => (ESCAPE.has(k) ? v.replace(/(^|[^\\])([&%#])/g, '$1\\$2') : v);
+function openBib(p, e, r) { openModal(close => html`<${BibDialog} p=${p} e=${e} r=${r} close=${close} />`, { wide: true }); }
+
+/** What differs from the published record, with a choice of which corrections to apply (owner and editors). */
+function BibDialog({ p, e, r, close }) {
+  const B = p.bib || NO_BIB;
+  const sug = r.suggestion;
+  const decide = p.canDecide;
+  // differences (ticked) and suggestions such as the full journal name for an abbreviated one (not ticked)
+  const rows = useMemo(() => [...r.diffs, ...(r.hints || []).filter(h => !r.diffs.some(d => d.field === h.field)).map(h => ({ ...h, hint: true }))], [r]);
+  const typeDiff = r.diffs.find(d => d.field === 'type');
+  const [pick, setPick] = useState(() => Object.fromEntries(rows.map(x => [x.field, !x.hint])));
+  const [busy, setBusy] = useState(false);
+  // a DOI hidden from the printed bibliography (xdoi, or "%doi" which becomes xdoi) is corrected where it is
+  const doiKey = e.fields.doi !== undefined ? 'doi' : BIB.hiddenDoi(e) ? 'xdoi' : 'doi';
+  // "%name = {…}" lines are kept, written as xname = {…} (BibTeX can read the entry then)
+  const kept = () => { const o = { ...e.fields }; for (const [k, v] of Object.entries(e.commented || {})) if (o[`x${k}`] === undefined && o[k] === undefined) o[`x${k}`] = v; return o; };
+  const send = async (text, note) => {
+    setBusy(true);
+    try { await api(`/api/projects/${p.id}/bib/fix`, { method: 'POST', body: { file: e.file, key: e.key, base: e.text, text, note } }); toast(`${e.key} corrected — it goes into the revised project and is checked again`, 'ok', 6000); close(); }
+    catch (err) { toastError(err); }
+    setBusy(false);
+  };
+  const apply = () => {
+    if (!sug) return;
+    const fields = {};
+    const type = typeDiff && pick.type ? typeDiff.crossref.replace(/^@/, '') : e.type;
+    const chosen = rows.filter(d => pick[d.field]);
+    for (const d of chosen) if (d.field !== 'type' && d.crossref) fields[d.field === 'doi' ? doiKey : d.field] = texEscape(d.field, d.crossref);
+    // a changed entry type takes its venue field from the record (journal ↔ booktitle)
+    if (type !== e.type) for (const k of ['journal', 'booktitle']) if (sug.fields[k]) fields[k] = texEscape(k, sug.fields[k]);
+    const original = kept();
+    if (type !== e.type) { delete original.journal; delete original.booktitle; }
+    send(BIB.formatEntry(type, e.key, fields, original), `${chosen.map(d => (FIELD_LABEL[d.field] || d.field).toLowerCase()).join(', ')} as in the published record`);
+  };
+  const fullRecord = () => {
+    if (!sug) return;
+    const fields = Object.fromEntries(Object.entries(sug.fields).map(([k, v]) => [k, texEscape(k, v)]));
+    const original = kept();
+    delete original.journal; delete original.booktitle;
+    if (B.skipDoi) delete fields.doi;
+    if (fields.doi && doiKey !== 'doi') { fields[doiKey] = fields.doi; delete fields.doi; }
+    send(BIB.formatEntry(sug.type, e.key, fields, original), 'replaced by the published record');
+  };
+  const ignore = async () => { try { await api(`/api/projects/${p.id}/bib`, { method: 'PATCH', body: { id: e.id, ignore: true } }); close(); } catch (err) { toastError(err); } };
+  const tone = r.status === 'ok' ? 'ok' : r.status === 'err' ? 'bad' : r.status === 'warn' ? 'warn' : 'info';
+  const nPick = rows.filter(x => pick[x.field]).length;
+  return html`<div class="modal-body bibc-dialog">
+    <div class="row"><h3 class="grow">Reference check · <code>${e.key}</code></h3><button class="btn btn-text btn-sm" onClick=${close}>${Icon('x')}</button></div>
+    <div class=${`bibc-verdict t-${tone}`}>${r.message}${r.hints && r.hints.length && !r.diffs.length ? ` — ${r.hints.length === 1 ? 'one optional suggestion' : `${r.hints.length} optional suggestions`} below` : ''}</div>
+    ${r.preprint ? html`<p class="small muted">Its published version isn’t in Crossref or OpenAlex (common for ICLR, NeurIPS and other OpenReview venues), so it was compared with the preprint of the same paper — title and authors only${r.link ? html` · <a href=${r.link} target="_blank" rel="noopener noreferrer">the preprint ${Icon('external')}</a>` : null}.</p>`
+      : r.doi ? html`<p class="small">Published record${r.source ? ` (${r.source})` : ''}: <a href=${`https://doi.org/${r.doi}`} target="_blank" rel="noopener noreferrer">doi.org/${r.doi} ${Icon('external')}</a></p>`
+      : r.link ? html`<p class="small">Record${r.source ? ` (${r.source})` : ''}: <a href=${r.link} target="_blank" rel="noopener noreferrer">${r.link} ${Icon('external')}</a></p>` : null}
+    ${r.status === 'err' && !r.doi ? html`<p class="small muted">Check that the title is spelled exactly as published. Preprints, web pages and reports may not be in Crossref; an entry of type <code>@misc</code> is not checked.</p>` : null}
+    ${rows.length ? html`<div class="tgrid-wrap"><table class="bibc-diff"><colgroup>${decide && sug ? html`<col style="width:36px" />` : null}<col style="width:26%" /><col /><col /></colgroup><thead><tr>${decide && sug ? html`<th></th>` : null}<th>Field</th><th>In the .bib</th><th>Published record</th></tr></thead><tbody>
+      ${rows.map(x => html`<tr class=${x.hint ? 'hint' : ''} onClick=${() => decide && sug && setPick(q => ({ ...q, [x.field]: !q[x.field] }))}>
+        ${decide && sug ? html`<td><input type="checkbox" checked=${!!pick[x.field]} onChange=${() => {}} /></td>` : null}
+        <td class="f">${FIELD_LABEL[x.field] || x.field}${x.hint ? html` <span class="chip c-info">Suggestion</span>` : null}${x.detail ? html`<div class="tiny muted">${x.detail}</div>` : null}</td>
+        <td class="have">${x.have || html`<span class="faint">(missing)</span>`}</td>
+        <td class="theirs">${x.crossref || html`<span class="faint">(none)</span>`}</td></tr>`)}
+    </tbody></table></div>` : null}
+    <details class="mini-det"><summary>The entry in ${e.file}</summary><pre class="bibc-pre">${e.text}</pre></details>
+    ${!decide ? html`<p class="tiny faint">Only the owner and editors can apply corrections.</p>` : null}
+    <div class="modal-actions bibc-actions">
+      <a class="btn btn-text btn-sm" href=${BIB.scholarUrl(e)} target="_blank" rel="noopener noreferrer">Google Scholar ↗</a>
+      ${decide ? html`<button class="btn btn-text btn-sm" onClick=${ignore} title="Stop checking this entry in this project; “Ignored” brings it back">Ignore permanently</button>` : null}
+      <span class="grow"></span>
+      ${decide && sug ? html`<button class="btn btn-ghost" disabled=${busy} onClick=${fullRecord} title="Replace the entry with the published record (other fields such as url or note are kept)">Use the full record</button>` : null}
+      ${decide && sug && rows.length ? html`<button class="btn btn-primary" disabled=${busy || !nPick} onClick=${apply}>${busy ? html`<${Spinner} small />` : Icon('check')} Apply ${plural(nPick, 'correction')}</button>` : html`<button class="btn btn-primary" onClick=${close}>Close</button>`}
+    </div>
   </div>`;
 }
 

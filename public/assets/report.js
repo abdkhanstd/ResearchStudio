@@ -259,6 +259,21 @@ async function flowDoc(title) {
 const fileBase = p => (p.title || 'manuscript').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-').slice(0, 60) || 'manuscript';
 
 /** The review report as a PDF document (no print dialog). */
+/** .bib entries (LaTeX projects) that differ from their published record or were not found; null when not checked. */
+function bibProblems(p) {
+  const B = p.bib;
+  if (!B || !Object.keys(B.results || {}).length) return null;
+  const ignore = new Set(B.ignore || []);
+  const list = [];
+  for (const [id, x] of Object.entries(B.results)) {
+    if (ignore.has(id) || !x.r) continue;
+    const diffs = (x.r.diffs || []).filter(d => !(B.skipDoi && d.field === 'doi'));
+    if (x.r.status === 'err' || (x.r.status === 'warn' && diffs.length)) list.push({ key: id.includes('.bib#') ? id.slice(id.indexOf('.bib#') + 5) : id, msg: x.r.message, fields: diffs.map(d => d.field), err: x.r.status === 'err' });
+  }
+  return { list, total: Object.keys(B.results).length, fixes: (B.fixes || []).length };
+}
+const bibLine = b => `${b.key} — ${b.err ? b.msg : `differs from the published record: ${b.fields.join(', ')}`}`;
+
 export async function reportPdf(p) {
   const d = await flowDoc(`${p.title} — review report`);
   const { F, FI } = d.fonts;
@@ -285,6 +300,12 @@ export async function reportPdf(p) {
   d.heading(`References${p.refcheck && p.refcheck.summary ? ` (score ${p.refcheck.summary.score ?? '-'})` : ''}`, 2);
   if (rc.length) for (const r of rc) d.text(`• [${r.i + 1}] ${r.raw} — ${r.verdict}: ${(r.issues || []).map(i => i.msg).join('; ')}`, { size: 9, indent: 6, gap: 2 });
   else d.text(p.refcheck ? 'No problems found.' : 'Not checked.', { color: d.C.muted });
+  const bp = bibProblems(p);
+  if (bp) {
+    d.heading(`Reference entries in the .bib (${bp.list.length} of ${bp.total} checked differ or were not found${bp.fixes ? `; ${bp.fixes} corrected` : ''})`, 2);
+    if (bp.list.length) for (const b of bp.list) d.text(`• ${bibLine(b)}`, { size: 9, indent: 6, gap: 2 });
+    else d.text('Every checked entry matches its published record.', { color: d.C.muted });
+  }
   d.heading(`Changes made (${changed.length})`, 1);
   d.text('Deleted text is red and struck through; inserted text is blue and underlined.', { size: 8.5, font: FI, color: d.C.muted, gap: 8 });
   for (const b of changed) { d.label(blockLabel(p, b)); d.diff(b.text, b.cur); }
@@ -339,6 +360,7 @@ export function printReport(p) {
     <h3>Numbers vs. tables and figures (${claims.length} problems${p.evidence ? ` of ${p.evidence.claims.length} claims` : ', not run'})</h3>${claims.length ? `<ul>${claims.map(c => `<li>“${esc(c.quote)}” — ${esc(c.explain || '')}${c.expected ? ` <b>Evidence:</b> ${esc(c.expected)}` : ''}</li>`).join('')}</ul>` : ''}
     ${p.evidence && p.evidence.consistency.length ? `<h3>Reported inconsistently</h3><ul>${p.evidence.consistency.map(x => `<li>${esc(x.explain)}</li>`).join('')}</ul>` : ''}
     <h3>References${p.refcheck && p.refcheck.summary ? ` (score ${p.refcheck.summary.score ?? '—'})` : ''}</h3>${rc.length ? `<ul>${rc.map(r => `<li>[${r.i + 1}] ${esc(r.raw)} — <b>${esc(r.verdict)}</b>: ${esc((r.issues || []).map(i => i.msg).join('; '))}</li>`).join('')}</ul>` : `<p>${p.refcheck ? 'No problems found.' : 'Not checked.'}</p>`}
+    ${(bp => (bp ? `<h3>Reference entries in the .bib (${bp.list.length} of ${bp.total} checked differ or were not found${bp.fixes ? `; ${bp.fixes} corrected` : ''})</h3>${bp.list.length ? `<ul>${bp.list.map(b => `<li>${esc(bibLine(b))}</li>`).join('')}</ul>` : '<p>Every checked entry matches its published record.</p>'}` : ''))(bibProblems(p))}
     <h2>Changes made (${changed.length})</h2>${changed.map(b => `<div class="chg"><div class="w">${esc(blockLabel(p, b))}</div><p>${diffHtml(b.text, b.cur)}</p></div>`).join('') || '<p>None yet.</p>'}
     <h2>Open suggestions and comments (${open.length})</h2>${open.map(s => { const b = p.blockById.get(s.bid); return `<div class="chg"><div class="w">${esc(b ? blockLabel(p, b) : '')} · ${esc(s.byName)}${s.kind === 'edit' ? ` · ${esc(catLabel(s.cat))}` : ' · comment'}</div>${s.kind === 'edit' ? `<p>${diffHtml(s.base, s.text)}</p>` : ''}${s.note ? `<p class="note">${esc(s.note)}</p>` : ''}</div>`; }).join('') || '<p>None.</p>'}
   </article>`;

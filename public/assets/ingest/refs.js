@@ -220,7 +220,9 @@ function bibToRef(type, key, f) {
   const pages = delatex(f.pages || '').replace(/–/g, '-');
   const auStr = au.display.length > 6 || au.etal ? `${au.display.slice(0, 6).join(', ')} et al.` : au.display.join(', ');
   const raw = [auStr, title ? `"${title}"` : '', venue, f.volume ? `vol. ${delatex(f.volume)}` : '', f.number ? `no. ${delatex(f.number)}` : '', pages ? `pp. ${pages}` : '', year || '', eprint ? `arXiv:${eprint}` : '', doi ? `doi: ${doi}` : '', !doi && url ? url : ''].filter(Boolean).join(', ') + '.';
-  return { raw, key, parsed: { authors: au.fams, etal: au.etal, org: au.org, title: title || null, venue: venue || null, year, volume: delatex(f.volume || '') || null, issue: delatex(f.number || '') || null, pages: pages || null, type: ptype, doi, arxiv: eprint, urls: url ? [url] : [], key }, display: { authors: au.display, year } };
+  // the names as written and the entry type: RefCheck compares them the way Rykhet LaTeX does
+  const names = au.org ? [] : String(f.author || f.editor || '').split(/\s+and\s+/i).map(x => delatex(x).trim()).filter(x => x && x.toLowerCase() !== 'others');
+  return { raw, key, parsed: { authors: au.fams, names, etal: au.etal, org: au.org, title: title || null, venue: venue || null, year, volume: delatex(f.volume || '') || null, issue: delatex(f.number || '') || null, pages: pages || null, type: ptype, bibType: type, doi, arxiv: eprint, urls: url ? [url] : [], key }, display: { authors: au.display, year } };
 }
 export function texCites(tex) {
   const keys = new Map();

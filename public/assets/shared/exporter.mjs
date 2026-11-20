@@ -3,6 +3,7 @@
  *  Copying, redistribution, modification and use in other projects are not permitted. */
 // Shared by the browser (exports are made on the user's computer) and the server (hand-off to Rykhet LaTeX).
 /** Text exports: change list (Markdown / plain text), unified diff, revised LaTeX sources, revised plain text. */
+import { applyBibFixes } from './bib.mjs';
 
 const READ_KINDS = new Set(['title', 'abstract', 'para', 'list', 'caption', 'equation', 'footnote']);
 /** Location of a block, numbered like the app (¶ n = position in the reading order). */
@@ -115,7 +116,11 @@ function revisedTex(p) {
     }
     files[file] = t;
   }
-  return { files, applied, skipped };
+  // corrections of .bib entries from the reference check (the .bib files hold no paragraphs)
+  const fixes = (p.bib && p.bib.fixes) || [];
+  const bib = fixes.length ? applyBibFixes(files, fixes) : null;
+  if (bib) Object.assign(files, bib.files);
+  return { files, applied, skipped, bib: bib ? { applied: bib.applied.length, present: bib.present.length, stale: bib.stale } : null };
 }
 
 /** Regions of one revised source file: where each paragraph sits in the revised text and whether it changed. */

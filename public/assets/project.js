@@ -82,6 +82,7 @@ function Overview({ p }) {
   const ev = p.evidence;
   const mism = ev ? ev.claims.filter(c => ['mismatch', 'partly'].includes(c.override || c.verdict)).length : 0;
   const rc = p.refcheck && p.refcheck.summary;
+  const bc = bibCounts(p);
   const mine = myProgress(p);
   const decide = p.canDecide;
   return html`<div class="ov-grid">
@@ -111,7 +112,8 @@ function Overview({ p }) {
         <a class="finding" href=${`/app/p/${p.id}/checks`}><span class="f-ic warn">${Icon('target')}</span><div class="grow"><b>Consistency checks</b><span>${lint.filter(i => i.sev === 'error').length} errors, ${lint.filter(i => i.sev === 'warn').length} warnings, ${lint.filter(i => i.sev === 'info').length} notes</span></div>${Icon('chevR')}</a>
         ${p.ai.enabled ? html`<a class="finding" href=${`/app/p/${p.id}/checks?f=ai`}><span class="f-ic ai">${Icon('sparkle')}</span><div class="grow"><b>AI proofreading</b><span>${Object.keys(p.ai.review || {}).length ? `${aiIssues} suggestions in ${Object.keys(p.ai.review).length} blocks` : 'not run yet'}</span></div>${Icon('chevR')}</a>` : null}
         <a class="finding" href=${`/app/p/${p.id}/evidence`}><span class="f-ic bad">${Icon('graph')}</span><div class="grow"><b>Numbers vs. tables & figures</b><span>${ev ? `${ev.claims.length} claims · ${mism} mismatch${mism === 1 ? '' : 'es'} · ${ev.consistency.length} inconsistent` : 'not run yet'}</span></div>${Icon('chevR')}</a>
-        <a class="finding" href=${`/app/p/${p.id}/checks?f=refs`}><span class="f-ic info">${Icon('check')}</span><div class="grow"><b>References (RefCheck)</b><span>${p.refs.length ? (rc ? `${rc.verified || 0} verified · ${(rc.problem || 0) + (rc.notfound || 0) + (rc.retracted || 0)} problems of ${rc.total}` : p.refcheck ? 'checking…' : `${p.refs.length} references, not checked yet`) : 'no reference list found'}</span></div>${Icon('chevR')}</a>
+        ${bc ? html`<a class="finding" href=${`/app/p/${p.id}/checks?f=refs`}><span class="f-ic info">${Icon('book')}</span><div class="grow"><b>References (.bib check)</b><span>${bc.running ? `checking ${bc.running} · ` : ''}${bc.ok} match · ${bc.warn} differ · ${bc.err} not found${bc.unknown ? ` · ${bc.unknown} unsure` : ''}</span></div>${Icon('chevR')}</a>`
+        : html`<a class="finding" href=${`/app/p/${p.id}/checks?f=refs`}><span class="f-ic info">${Icon('check')}</span><div class="grow"><b>References (RefCheck)</b><span>${p.refs.length ? (rc ? `${rc.verified || 0} verified · ${(rc.problem || 0) + (rc.notfound || 0) + (rc.retracted || 0)} problems of ${rc.total}` : p.refcheck ? 'checking…' : `${p.refs.length} references, not checked yet`) : 'no reference list found'}</span></div>${Icon('chevR')}</a>`}
         <${PrecheckButton} p=${p} />
       </div>` : null}
       <div class="card pad"><h3 class="card-h">Manuscript</h3>
@@ -130,6 +132,19 @@ function Overview({ p }) {
   </div>`;
 }
 const fmdDaySafe = d => fmtDay(d);
+/** Results of the .bib reference check (LaTeX projects), as counts; null when nothing was checked. */
+export function bibCounts(p) {
+  const B = p.bib;
+  if (!B) return null;
+  const ignore = new Set(B.ignore || []);
+  const list = Object.entries(B.results || {}).filter(([id]) => !ignore.has(id)).map(([, x]) => x.r);
+  const running = B.job && B.job.status === 'running' ? `${B.job.done || 0} of ${B.job.total || '…'}` : null;
+  if (!list.length && !running) return null;
+  const c = { ok: 0, warn: 0, err: 0, unknown: 0, running };
+  // with DOIs not checked, a DOI-only difference is not one
+  for (const r of list) c[B.skipDoi && r.status === 'warn' && r.diffs.every(d => d.field === 'doi') ? 'ok' : r.status]++;
+  return c;
+}
 export function PrecheckButton({ p }) {
   const [busy, setBusy] = useState(false);
   const job = p.ai.job;
@@ -142,7 +157,7 @@ function Activity({ p }) {
   const [list, setList] = useState(null);
   useEffect(() => { if (p.role === 'owner') api(`/api/projects/${p.id}/activity`).then(r => setList(r.activity), () => setList([])); }, [p.rev]);
   if (p.role !== 'owner') return null;
-  const label = { created: 'uploaded the manuscript', opened: 'opened it', suggested: 'suggested an edit', commented: 'commented', accepted: 'accepted a suggestion', rejected: 'rejected a suggestion', edited: 'edited a paragraph', undo: 'undid a change', restored: 'restored a version', invited: 'invited', joined: 'joined as', finished: 'finished reading', settings: 'changed the settings', precheck: 'ran the full check', export: 'exported', download: 'downloaded the original', reminded: 'sent a reminder to', 'access-revoked': 'removed access for', role: 'changed a role:', milestone: 'saved milestone', 'invite-revoked': 'withdrew the invitation for', 'figure-data': 'edited figure data:', 'table-data': 'edited table data:', import: 'merged a new version —', rexp: 'checked the authors’ retraction exposure —', left: 'left the manuscript', reread: 'read the manuscript again', 'latex-share': 'sent the project to Rykhet LaTeX', 'compiled-pdf': 'added a compiled PDF:' };
+  const label = { created: 'uploaded the manuscript', opened: 'opened it', suggested: 'suggested an edit', commented: 'commented', accepted: 'accepted a suggestion', rejected: 'rejected a suggestion', edited: 'edited a paragraph', undo: 'undid a change', restored: 'restored a version', invited: 'invited', joined: 'joined as', finished: 'finished reading', settings: 'changed the settings', precheck: 'ran the full check', export: 'exported', download: 'downloaded the original', reminded: 'sent a reminder to', 'access-revoked': 'removed access for', role: 'changed a role:', milestone: 'saved milestone', 'invite-revoked': 'withdrew the invitation for', 'figure-data': 'edited figure data:', 'table-data': 'edited table data:', import: 'merged a new version —', rexp: 'checked the authors’ retraction exposure —', left: 'left the manuscript', reread: 'read the manuscript again', 'latex-share': 'sent the project to Rykhet LaTeX', 'compiled-pdf': 'added a compiled PDF:', 'bib-fix': 'changed a reference entry —', bibcheck: 'checked the references again' };
   return html`<div class="card pad"><h3 class="card-h">Activity</h3>${!list ? html`<${Spinner} small />` : !list.length ? html`<p class="faint small">Nothing yet.</p>` : html`<ul class="activity">${list.slice(0, 40).map(a => html`<li><${Avatar} name=${a.name} sub=${a.by} size=${22} /><div class="grow"><b>${a.name}</b> ${label[a.kind] || a.kind} ${a.detail ? html`<span class="muted">${a.detail}</span>` : ''}${a.bid && p.blockById.get(a.bid) ? html` <a href=${`/app/p/${p.id}/manuscript/${a.bid}`} class="small">${blockLabel(p, p.blockById.get(a.bid))}</a>` : ''}</div><span class="faint tiny nowrap">${ago(a.at)}</span></li>`)}</ul>`}</div>`;
 }
 
